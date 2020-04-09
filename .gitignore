@@ -1,0 +1,7 @@
+*npy
+*data
+*ckpt
+*log
+results/*
+data/*
+checkpoint/*

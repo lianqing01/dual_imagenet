@@ -11,6 +11,7 @@ import csv
 import os
 
 import numpy as np
+from models.dual_norm import DualNorm
 import torch
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
@@ -37,11 +38,18 @@ parser.add_argument('--epoch', default=200, type=int,
 parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
-parser.add_argument('--alpha', default=1., type=float,
-                    help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
+
+
+# param for dual norm
+parser.add_argument('--lamdba_dual_weight', default=1, type=int)
+parser.add_argument('--dual_lr', default=0.1, type=float)
+parser.add_argument('--dual_decay', default=1e-3, type=str)
+
+
 args = parser.parse_args()
+args.dual_decay = float(args.dual_decay)
 
 use_cuda = torch.cuda.is_available()
 
@@ -118,8 +126,19 @@ if use_cuda:
 
 criterion = nn.CrossEntropyLoss()
 print(args.lr)
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
+dual_param = []
+for m in net.modules():
+    if isinstance(m, DualNorm):
+        dual_param.extend(list(map(id, m.parameters())))
+origin_param = filter(lambda p:id(p) not in dual_param, net.parameters())
+
+optimizer = optim.SGD(origin_param, lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
+dual_optimizer = (optim.SGD(
+                    filter(lambda p:id(p) in dual_param, net.parameters()),
+                    lr=args.dual_lr, momentum=0.9,
+                    weight_decay=args.dual_decay
+                    ))
 
 
 
@@ -131,13 +150,38 @@ def train(epoch):
     reg_loss = 0
     correct = 0
     total = 0
+    mean = 0
+    var = 0
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
 
         outputs = net(inputs)
         loss = criterion(outputs, targets)
+
+
+        # dual loss
+        weight_mean = 0
+        weight_var = 0
+        for m in net.modules():
+            if isinstance(m, DualNorm):
+                weight_mean_, weight_var_ =  m._get_weight_mean_var()
+                weight_mean += weight_mean_
+                weight_var += weight_var_
+
+        dual_loss = weight_mean + weight_var
+        dual_loss = -1 * args.lamdba_dual_weight * dual_loss
+
+        # optimize dual loss
+
+        dual_optimizer.zero_grad()
+        dual_loss.backward(retain_graph=True)
+        dual_optimizer.step()
+
         train_loss += loss.data.item()
+        loss -= dual_loss
+
+        # optimize
         _, predicted = torch.max(outputs.data, 1)
         total += targets.size(0)
         correct += predicted.eq(targets.data).cpu().sum().float()
@@ -148,13 +192,27 @@ def train(epoch):
         optimizer.step()
 
         progress_bar(batch_idx, len(trainloader),
-                     'Loss: %.3f | Reg: %.5f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), reg_loss/(batch_idx+1),
+                     'Loss: %.3f | Dual Loss: %.4f | Mean %.4f | Var %.4f | Reg: %.5f | Acc: %.3f%% (%d/%d)'
+                     % (train_loss/(batch_idx+1), dual_loss.item(), mean, var,
+                        reg_loss/(batch_idx+1),
                         100.*correct/total, correct, total))
         if (batch_idx+1) % 10 == 0:
+            mean = 0
+            var = 0
+            for m in net.modules():
+                if isinstance(m, DualNorm):
+                    mean_, var_ = m._get_mean_var()
+                    mean += mean_.abs()
+                    var += var_.abs()
             curr_idx = epoch * len(trainloader) + batch_idx
             tb_logger.add_scalar("train/train_loss", train_loss / (batch_idx+1), curr_idx)
             tb_logger.add_scalar("train/train_acc", 100.*correct/total, curr_idx)
+            tb_logger.add_scalar("train/norm_mean", mean, curr_idx)
+            tb_logger.add_scalar("train/norm_var", var, curr_idx)
+
+    for m in net.modules():
+        if isinstance(m, DualNorm):
+            m._reset_mean_var()
     return (train_loss/batch_idx, reg_loss/batch_idx, 100.*correct/total)
 
 
@@ -186,8 +244,23 @@ def test(epoch):
         checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
-    tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, epoch * len(trainloader))
-    tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
+    mean = 0
+    var = 0
+    for m in net.modules():
+        if isinstance(m, DualNorm):
+                mean_, var_ = m._get_mean_var()
+                mean += mean_.abs()
+                var += var_.abs()
+
+    curr_idx = epoch * len(trainloader)
+    tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, curr_idx)
+    tb_logger.add_scalar("test/test_acc", 100.*correct/total, curr_idx)
+    tb_logger.add_scalar("test/norm_mean", mean, curr_idx)
+    tb_logger.add_scalar("test/norm_var", var, curr_idx)
+    for m in net.modules():
+        if isinstance(m, DualNorm):
+            m._reset_mean_var()
+
     return (test_loss/batch_idx, 100.*correct/total)
 
 
