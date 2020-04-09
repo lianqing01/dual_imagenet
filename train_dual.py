@@ -152,6 +152,13 @@ def train(epoch):
     total = 0
     mean = 0
     var = 0
+    lambda_ = 0
+    mu_ = 0
+
+    for m in net.modules():
+        if isinstance(m, DualNorm):
+            m._reset_mean_var()
+
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
@@ -192,8 +199,15 @@ def train(epoch):
         optimizer.step()
 
         progress_bar(batch_idx, len(trainloader),
-                     'Loss: %.3f | Dual Loss: %.4f | Mean %.4f | Var %.4f | Reg: %.5f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), dual_loss.item(), mean, var,
+                     'Loss: %.3f | Dual Loss: %.4f \
+                     | Dual Loss mean: %.4f | Duall Loss var: %.4f \
+                     | Mean %.4f | Var %.4f \
+                     | Dual Lambda %.4f | Dual Mu %.4f  \
+                     | Reg: %.5f | Acc: %.3f%% (%d/%d)'
+                     % (train_loss/(batch_idx+1), dual_loss.item(),
+                        -1 * weight_mean.item(), -1 * weight_var.item(),
+                        mean, var,
+                        lambda_, mu_,
                         reg_loss/(batch_idx+1),
                         100.*correct/total, correct, total))
         if (batch_idx+1) % 10 == 0:
@@ -209,6 +223,19 @@ def train(epoch):
             tb_logger.add_scalar("train/train_acc", 100.*correct/total, curr_idx)
             tb_logger.add_scalar("train/norm_mean", mean, curr_idx)
             tb_logger.add_scalar("train/norm_var", var, curr_idx)
+            tb_logger.add_scalar("train/dual_loss_mean", -1 * weight_mean.item(), curr_idx)
+            tb_logger.add_scalar("train/dual_loss_var", -1 * weight_var.item(), curr_idx)
+            # get the dual weight
+            lambda_ = []
+            mu_ = []
+            for m in net.modules():
+                if isinstance(m, DualNorm):
+                    lambda_.append(m.lambda_.data.abs().mean())
+                    mu_.append(m.mu_.data.abs().mean())
+            lambda_ = torch.mean(torch.stack(lambda_))
+            mu_ = torch.mean(torch.stack(mu_))
+            tb_logger.add_scalar("train/dual_lambda_", lambda_.item(), curr_idx)
+            tb_logger.add_scalar("train/dual_mu_", mu_.item(), curr_idx)
 
     for m in net.modules():
         if isinstance(m, DualNorm):
@@ -257,6 +284,18 @@ def test(epoch):
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, curr_idx)
     tb_logger.add_scalar("test/norm_mean", mean, curr_idx)
     tb_logger.add_scalar("test/norm_var", var, curr_idx)
+    lambda_ = []
+    mu_ = []
+    for m in net.modules():
+        if isinstance(m, DualNorm):
+            lambda_.append(m.lambda_.data.abs().mean())
+            mu_.append(m.mu_.data.abs().mean())
+    lambda_ = torch.mean(torch.stack(lambda_))
+    mu_ = torch.mean(torch.stack(mu_))
+    tb_logger.add_scalar("test/dual_lambda_", lambda_.item(), curr_idx)
+    tb_logger.add_scalar("test/dual_mu_", mu_.item(), curr_idx)
+
+
     for m in net.modules():
         if isinstance(m, DualNorm):
             m._reset_mean_var()
