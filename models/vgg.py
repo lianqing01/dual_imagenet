@@ -4,6 +4,7 @@ import math
 import torch.nn as nn
 from torch.autograd import Variable
 from .dual_norm import DualNorm
+from .dual_norm import DualAffine
 
 
 cfg = {
@@ -51,7 +52,8 @@ class VGG(nn.Module):
                 if with_bn == 'dual':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                DualNorm(x),
-                               nn.ReLU(inplace=True)]
+                               nn.ReLU(inplace=True),
+                               DualAffine(x),]
                 elif with_bn == 'bn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),

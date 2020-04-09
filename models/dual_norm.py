@@ -52,4 +52,14 @@ class DualNorm(nn.Module):
         return self.weight_mean, self.weight_var
 
 
+class DualAffine(nn.Module):
+    def __init__(self, num_features):
+        super(DualAffine, self).__init__()
+        self.num_features = num_features
+        self.u_ = nn.Parameter(torch.Tensor(num_features).view([1, num_features, 1, 1]))
+        self.b_ = nn.Parameter(torch.Tensor(num_features).view([1, num_features, 1, 1]))
+        self.u_.data.fill_(1)
+        self.b_.data.fill_(0)
 
+    def forward(self, x):
+        return x * self.u_ + self.b_
