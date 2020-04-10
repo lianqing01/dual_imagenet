@@ -5,6 +5,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from .dual_norm import DualNorm
 from .dual_norm import DualAffine
+from .constraint_bn_v2 import *
 
 
 cfg = {
@@ -45,7 +46,7 @@ class VGG(nn.Module):
     def _make_layers(self, cfg, with_bn=False):
         layers = []
         in_channels = 3
-        for x in cfg:
+        for idx, x in enumerate(cfg):
             if x == 'M':
                 layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
             else:
@@ -58,6 +59,15 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
+                elif with_bn == 'constraint_bn_v2':
+                    if idx == 0:
+                        layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+                    else:
+                        layers += [Constraint_Norm2d(x),
+                                   Constraint_Affine2d(x),
+                                   nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
                 else:
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.ReLU(inplace=True)]
@@ -74,6 +84,9 @@ def vgg16_bn():
 
 def vgg16_dual_bn():
     return VGG('VGG16', with_bn='dual')
+
+def vgg16_constraint_bn_v2():
+    return VGG('VGG16', with_bn='constraint_bn_v2')
 # net = VGG('VGG11')
 # x = torch.randn(2,3,32,32)
 # print(net(Variable(x)).size())
