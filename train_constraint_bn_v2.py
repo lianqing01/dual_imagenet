@@ -41,13 +41,15 @@ parser.add_argument('--no-augment', dest='augment', action='store_false',
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
+parser.add_argument('--optim_loss', default="cross_entropy")
+parser.add_argument('--num_classes', default=10, type=int)
 
 
 # param for constraint norm
 parser.add_argument('--lamdba_constraint_weight', default=1, type=int)
 parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
-
+parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
 
 # two layer
 parser.add_argument('--two_layer', action='store_true', default=False)
@@ -113,7 +115,7 @@ if args.resume:
     torch.set_rng_state(rng_state)
 else:
     print('==> Building model..')
-    net = models.__dict__[args.model]()
+    net = models.__dict__[args.model](num_classes=args.num_classes)
 
 if not os.path.isdir('results/{}'.format(args.log_dir)):
     os.makedirs('results/{}'.format(args.log_dir))
@@ -129,11 +131,16 @@ if use_cuda:
     cudnn.benchmark = True
     print('Using CUDA..')
 
-criterion = nn.CrossEntropyLoss()
+if args.optim_loss == "cross_entropy":
+    criterion = nn.CrossEntropyLoss()
+elif args.optim_loss == "mse":
+    criterion = nn.MSELoss()
 print(args.lr)
 constraint_param = []
 for m in net.modules():
     if isinstance(m, Constraint_Lagrangian):
+        m.weight_decay = args.constraint_decay
+        m.get_optimal_lagrangian = args.get_optimal_lagrangian
         constraint_param.extend(list(map(id, m.parameters())))
 origin_param = filter(lambda p:id(p) not in constraint_param, net.parameters())
 
@@ -173,6 +180,8 @@ def train(epoch):
         inputs = inputs.view(bsz, -1)
 
         outputs = net(inputs)
+        if args.optim_loss == 'mse':
+            targets = targets.float()
         loss = criterion(outputs, targets)
 
 
@@ -189,10 +198,10 @@ def train(epoch):
         constraint_loss = -1 * args.lamdba_constraint_weight * constraint_loss
 
         # optimize constraint loss
-
-        constraint_optimizer.zero_grad()
-        constraint_loss.backward(retain_graph=True)
-        constraint_optimizer.step()
+        if args.get_optimal_lagrangian == True:
+            constraint_optimizer.zero_grad()
+            constraint_loss.backward(retain_graph=True)
+            constraint_optimizer.step()
 
         train_loss += loss.data.item()
         loss -= constraint_loss
@@ -206,7 +215,6 @@ def train(epoch):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         optimizer.step()
-
         progress_bar(batch_idx, len(trainloader),
                      'Loss: %.3f | Corat Loss: %.4f \
                      | Corat mean: %.4f | Corat var: %.4f \
@@ -225,8 +233,8 @@ def train(epoch):
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     mean_, var_ = m.get_mean_var()
-                    mean += mean_.abs()
-                    var += var_.abs()
+                    mean += mean_
+                    var += var_
             curr_idx = epoch * len(trainloader) + batch_idx
             tb_logger.add_scalar("train/train_loss", train_loss / (batch_idx+1), curr_idx)
             tb_logger.add_scalar("train/train_acc", 100.*correct/total, curr_idx)
@@ -239,8 +247,8 @@ def train(epoch):
             xi_ = []
             for m in net.modules():
                 if isinstance(m, Constraint_Lagrangian):
-                    lambda_.append(m.lambda_.data.abs().mean())
-                    xi_.append(m.xi_.data.abs().mean())
+                    lambda_.append(m.lambda_.data.mean())
+                    xi_.append(m.xi_.data.mean())
             lambda_ = torch.mean(torch.stack(lambda_))
             xi_ = torch.mean(torch.stack(xi_))
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
@@ -266,6 +274,8 @@ def test(epoch):
             bsz = inputs.size(0)
             inputs = inputs.view(bsz, -1)
             outputs = net(inputs)
+            if args.optim_loss == 'mse':
+                targets = targets.float()
             loss = criterion(outputs, targets)
 
             test_loss += loss.item()
@@ -287,8 +297,8 @@ def test(epoch):
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
                 mean_, var_ = m.get_mean_var()
-                mean += mean_.abs()
-                var += var_.abs()
+                mean += mean_
+                var += var_
 
     curr_idx = epoch * len(trainloader)
     tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, curr_idx)
@@ -299,8 +309,8 @@ def test(epoch):
     xi_ = []
     for m in net.modules():
         if isinstance(m, Constraint_Lagrangian):
-            lambda_.append(m.lambda_.data.abs().mean())
-            xi_.append(m.xi_.data.abs().mean())
+            lambda_.append(m.lambda_.data.mean())
+            xi_.append(m.xi_.data.mean())
     lambda_ = torch.mean(torch.stack(lambda_))
     xi_ = torch.mean(torch.stack(xi_))
     tb_logger.add_scalar("test/constraint_lambda_", lambda_.item(), curr_idx)

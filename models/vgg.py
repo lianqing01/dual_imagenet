@@ -17,7 +17,7 @@ cfg = {
 
 
 class VGG(nn.Module):
-    def __init__(self, vgg_name, with_bn=False):
+    def __init__(self, vgg_name, num_classes = 10, with_bn=False):
         super(VGG, self).__init__()
         self.features = self._make_layers(cfg[vgg_name], with_bn)
         self.classifier = nn.Sequential(
@@ -27,7 +27,7 @@ class VGG(nn.Module):
             nn.Dropout(),
             nn.Linear(512, 512),
             nn.ReLU(True),
-            nn.Linear(512, 10),
+            nn.Linear(512, num_classes),
         )
          # Initialize weights
         for m in self.modules():

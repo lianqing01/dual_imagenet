@@ -6,7 +6,7 @@ import torch.nn as nn
 
 class Constraint_Norm(nn.Module):
 
-    def __init__(self, num_features):
+    def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False):
         super(Constraint_Norm, self).__init__()
         self.num_features = num_features
         self.set_dim()
@@ -16,7 +16,9 @@ class Constraint_Norm(nn.Module):
         #initialization
         self.mu_.data.fill_(0)
         self.gamma_.data.fill_(1)
-        self.lagrangian = Constraint_Lagrangian(num_features)
+        self.lagrangian = Constraint_Lagrangian(num_features,
+                                                weight_decay=weight_decay,
+                                                get_optimal_lagrangian=get_optimal_lagrangian)
 
         # strore mean and variance for reference
         self.register_buffer("mean", torch.zeros(num_features))
@@ -24,7 +26,7 @@ class Constraint_Norm(nn.Module):
         self.register_buffer("tracking_times", torch.tensor(0, dtype=torch.long))
 
     def get_mean_var(self):
-        return (self.mean.abs().sum() / (self.tracking_times + 1e-11), self.var.abs().sum() / (self.tracking_times + 1e-11))
+        return (self.mean.sum() / (self.tracking_times + 1e-11), self.var.sum() / (self.tracking_times + 1e-11))
 
     def set_dim(self):
         raise NotImplementedError
@@ -76,26 +78,36 @@ class Constraint_Norm2d(Constraint_Norm):
 
 class Constraint_Lagrangian(nn.Module):
 
-    def __init__(self, num_features):
+    def __init__(self, num_features, weight_decay=1e-4, get_optimal_lagrangian=False):
         super(Constraint_Lagrangian, self).__init__()
         self.num_features = num_features
         self.lambda_ = nn.Parameter(torch.Tensor(num_features))
         self.xi_ = nn.Parameter(torch.Tensor(num_features))
         self.lambda_.data.fill_(0)
         self.xi_.data.fill_(0)
+        self.weight_decay = weight_decay
+        self.get_optimal_lagrangian = get_optimal_lagrangian
 
     def get_weighted_mean(self, x, norm_dim):
-        x_ = x.clone()
         mean = x.mean(dim=norm_dim)
-        self.weight_mean = self.xi_ * mean
+        if self.get_optimal_lagrangian == True:
+            best_xi = mean.detach() / self.weight_decay
+            self.weight_mean = best_xi * mean
+            self.xi_.data = best_xi
+        else:
+            self.weight_mean = self.xi_ * mean
         self.weight_mean = self.weight_mean.sum()
         return mean
 
     def get_weighted_var(self, x, norm_dim):
-        x_ = x.clone()
-        var = x**2
+        var = x**2 - 1
         var = var.mean(dim=norm_dim)
-        self.weight_var = self.lambda_ * var
+        if self.get_optimal_lagrangian == True:
+            best_lambda = var.detach() / self.weight_decay
+            self.weight_var = best_lambda * var
+            self.lambda_.data = best_lambda
+        else:
+            self.weight_var = self.lambda_ * var
         self.weight_var = self.weight_var.sum()
         return var
     def get_weight_mean_var(self):
