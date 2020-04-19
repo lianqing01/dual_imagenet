@@ -64,10 +64,20 @@ class VGG(nn.Module):
                         layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                    nn.ReLU(inplace=True)]
                     else:
-                        layers += [Constraint_Norm2d(x),
-                                   Constraint_Affine2d(x),
+                        layers += [Constraint_Norm2d(in_channels, pre_affine=True, post_affine=True),
+                                   #Constraint_Affine2d(in_channels),
                                    nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                    nn.ReLU(inplace=True)]
+                elif with_bn == 'constraint_bn_v2_no_affine':
+                    if idx == 0:
+                        layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+                    else:
+                        layers += [Constraint_Norm2d(in_channels, pre_affine=False, post_affine=False),
+                                   #Constraint_Affine2d(in_channels),
+                                   nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+
                 else:
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.ReLU(inplace=True)]
@@ -76,17 +86,24 @@ class VGG(nn.Module):
         return nn.Sequential(*layers)
 
 
-def vgg16():
-    return VGG('VGG16', with_bn=False)
+def vgg16(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn=False)
 
-def vgg16_bn():
-    return VGG('VGG16', with_bn='bn')
+def vgg16_bn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn')
 
-def vgg16_dual_bn():
-    return VGG('VGG16', with_bn='dual')
+def vgg16_dual_bn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='dual')
 
-def vgg16_constraint_bn_v2():
-    return VGG('VGG16', with_bn='constraint_bn_v2')
+def vgg16_constraint_bn_v2(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v2')
+
+def vgg16_constraint_bn_v3(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v3')
+
+
+def vgg16_constraint_bn_v2_noaffine(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v2_no_affine')
 # net = VGG('VGG11')
 # x = torch.randn(2,3,32,32)
 # print(net(Variable(x)).size())

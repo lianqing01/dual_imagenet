@@ -6,9 +6,11 @@ import torch.nn as nn
 
 class Constraint_Norm(nn.Module):
 
-    def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False):
+    def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False, pre_affine=True, post_affine=True):
         super(Constraint_Norm, self).__init__()
         self.num_features = num_features
+        self.pre_affine=pre_affine
+        self.post_affine = post_affine
         self.set_dim()
         self.mu_ = nn.Parameter(torch.Tensor(num_features).view(self.feature_dim))
         self.gamma_ = nn.Parameter(torch.Tensor(num_features).view(self.feature_dim))
@@ -26,7 +28,7 @@ class Constraint_Norm(nn.Module):
         self.register_buffer("tracking_times", torch.tensor(0, dtype=torch.long))
 
     def get_mean_var(self):
-        return (self.mean.sum() / (self.tracking_times + 1e-11), self.var.sum() / (self.tracking_times + 1e-11))
+        return (self.mean.abs().mean() / (self.tracking_times + 1e-11), self.var.abs().mean() / (self.tracking_times + 1e-11))
 
     def set_dim(self):
         raise NotImplementedError
@@ -36,16 +38,20 @@ class Constraint_Norm(nn.Module):
     def forward(self, x):
 
         # mean
-        x = x - self.mu_
+        if self.pre_affine:
+            x = x - self.mu_
         mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         self.mean += mean.detach()
 
         # var
-        x = self.gamma_ * x
+        if self.pre_affine:
+            x = self.gamma_ * x
         var = self.lagrangian.get_weighted_var(x, self.norm_dim)
         self.var += var.detach()
 
         self.tracking_times += 1
+        if self.post_affine != False:
+            x = self.post_affine_layer(x)
         return x
 
 
@@ -58,20 +64,24 @@ class Constraint_Norm(nn.Module):
 
 
 class Constraint_Norm1d(Constraint_Norm):
-    def __init__(self, num_features):
-        super(Constraint_Norm1d, self).__init__(num_features)
+    def __init__(self, num_features, pre_affine=True, post_affine=True):
+        super(Constraint_Norm1d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features]
         self.norm_dim = [0]
+        if self.post_affine != False:
+            self.post_affine_layer = Constraint_Affine1d(self.num_features)
 
 class Constraint_Norm2d(Constraint_Norm):
-    def __init__(self, num_features):
-        super(Constraint_Norm2d, self).__init__(num_features)
+    def __init__(self, num_features, pre_affine=True, post_affine=True):
+        super(Constraint_Norm2d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features, 1, 1]
         self.norm_dim = [0, 2, 3]
+        if self.post_affine != False:
+            self.post_affine_layer = Constraint_Affine2d(self.num_features)
 
 
 
@@ -93,10 +103,11 @@ class Constraint_Lagrangian(nn.Module):
         if self.get_optimal_lagrangian == True:
             best_xi = mean.detach() / self.weight_decay
             self.weight_mean = best_xi * mean
-            self.xi_.data = best_xi
+            self.xi_ = best_xi
         else:
             self.weight_mean = self.xi_ * mean
         self.weight_mean = self.weight_mean.sum()
+        self.weight_mean_abs = self.weight_mean.abs().sum()
         return mean
 
     def get_weighted_var(self, x, norm_dim):
@@ -105,13 +116,17 @@ class Constraint_Lagrangian(nn.Module):
         if self.get_optimal_lagrangian == True:
             best_lambda = var.detach() / self.weight_decay
             self.weight_var = best_lambda * var
-            self.lambda_.data = best_lambda
+            self.lambda_ = best_lambda
         else:
             self.weight_var = self.lambda_ * var
         self.weight_var = self.weight_var.sum()
+        self.weight_var_abs = self.weight_var.abs().sum()
         return var
     def get_weight_mean_var(self):
         return (self.weight_mean, self.weight_var)
+
+    def get_weight_mean_var_abs(self):
+        return (self.weight_mean_abs, self.weight_var_abs)
 
 
 class Constraint_Affine(nn.Module):

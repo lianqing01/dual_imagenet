@@ -8,3 +8,6 @@ from .mobilenet import *
 # from .densenet_efficient_multi_gpu import DenseNet190
 from .densenet3 import DenseNet190
 from .two_layer import *
+from .resnet_nobn import *
+from .resnet_constraintbn import *
+from .resnet_nobn_v2 import *

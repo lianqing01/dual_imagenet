@@ -31,9 +31,9 @@ class DualNorm(nn.Module):
             self.tracking_times += 1
 
 
-            self.weight_mean = (self.mu_ * mean).mean()
+            self.weight_mean = (self.mu_ * mean).sum()
             # get variance
-            self.weight_var = (self.lambda_ * var).mean()
+            self.weight_var = (self.lambda_ * var).sum()
         return x
 
 

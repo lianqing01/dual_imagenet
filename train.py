@@ -7,6 +7,7 @@
 from __future__ import print_function
 
 import argparse
+import time
 import csv
 import os
 
@@ -21,7 +22,8 @@ import torchvision.datasets as datasets
 
 import models
 from torch.utils.tensorboard import SummaryWriter
-from utils import progress_bar
+from utils import progress_bar, AverageMeter
+from utils import create_logger
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -41,6 +43,15 @@ parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
+# for lr scheduler
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+
+# dataset
+parser.add_argument('--dataset', default='CIFAR10', type=str)
+
+parser.add_argument('--print_freq', default=10, type=int)
+
+
 args = parser.parse_args()
 
 use_cuda = torch.cuda.is_available()
@@ -51,8 +62,10 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 if args.seed != 0:
     torch.manual_seed(args.seed)
 
+os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
+logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 # Data
-print('==> Preparing data..')
+logger.info('==> Preparing data..')
 if args.augment:
     transform_train = transforms.Compose([
         transforms.RandomCrop(32, padding=4),
@@ -74,14 +87,25 @@ transform_test = transforms.Compose([
     transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
 ])
 
-trainset = datasets.CIFAR10(root='~/data', train=True, download=False,
+if args.dataset == 'CIFAR10':
+    trainset = datasets.CIFAR10(root='~/data', train=True, download=False,
                             transform=transform_train)
+    num_classes=10
+elif args.dataset == 'CIFAR100':
+    trainset = datasets.CIFAR100(root='~/data', train=True, download=True,
+                            transform=transform_train)
+    num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
                                           shuffle=True, num_workers=8)
 
-testset = datasets.CIFAR10(root='~/data', train=False, download=False,
+if args.dataset == 'CIFAR10':
+    testset = datasets.CIFAR10(root='~/data', train=False, download=False,
                            transform=transform_test)
+elif args.dataset == 'CIFAR100':
+    testset = datasets.CIFAR100(root='~/data', train=False, download=True,
+                            transform=transform_test)
+
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=8)
 
@@ -89,7 +113,7 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
 # Model
 if args.resume:
     # Load checkpoint.
-    print('==> Resuming from checkpoint..')
+    logger.info('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load('./checkpoint/ckpt.t7' + args.name + '_'
                             + str(args.seed))
@@ -99,11 +123,9 @@ if args.resume:
     rng_state = checkpoint['rng_state']
     torch.set_rng_state(rng_state)
 else:
-    print('==> Building model..')
-    net = models.__dict__[args.model]()
+    logger.info('==> Building model..')
+    net = models.__dict__[args.model](num_classes=num_classes)
 
-if not os.path.isdir('results/{}'.format(args.log_dir)):
-    os.makedirs('results/{}'.format(args.log_dir))
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
 
@@ -112,12 +134,12 @@ tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
 if use_cuda:
     net.cuda()
     net = torch.nn.DataParallel(net)
-    print(torch.cuda.device_count())
+    logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
-    print('Using CUDA..')
+    logger.info('Using CUDA..')
 
 criterion = nn.CrossEntropyLoss()
-print(args.lr)
+logger.info(args.lr)
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
@@ -125,43 +147,66 @@ optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
 
 
 def train(epoch):
-    print('\nEpoch: %d' % epoch)
+    logger.info('\nEpoch: %d' % epoch)
     net.train()
-    train_loss = 0
-    reg_loss = 0
+    train_loss = AverageMeter(100)
+    reg_loss = AverageMeter(100)
     correct = 0
     total = 0
+    acc = AverageMeter(100)
+    batch_time = AverageMeter()
     for batch_idx, (inputs, targets) in enumerate(trainloader):
+        start = time.time()
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
 
         outputs = net(inputs)
         loss = criterion(outputs, targets)
-        train_loss += loss.data.item()
+        train_loss.update(loss.data.item())
         _, predicted = torch.max(outputs.data, 1)
         total += targets.size(0)
-        correct += predicted.eq(targets.data).cpu().sum().float()
+        correct_idx = predicted.eq(targets.data).cpu().sum().float()
+        correct += correct_idx
+        acc.update(100. * correct_idx / float(targets.size(0)))
 
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         optimizer.step()
+        batch_time.update(time.time() - start)
+        remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
+        remain_time = remain_iter * batch_time.avg
+        t_m, t_s = divmod(remain_time, 60)
+        t_h, t_m = divmod(t_m, 60)
+        remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
-        progress_bar(batch_idx, len(trainloader),
-                     'Loss: %.3f | Reg: %.5f | Acc: %.3f%% (%d/%d)'
-                     % (train_loss/(batch_idx+1), reg_loss/(batch_idx+1),
-                        100.*correct/total, correct, total))
-        if (batch_idx+1) % 10 == 0:
+
+        if (batch_idx+1) % args.print_freq == 0:
+            logger.info('Train: [{0}][{1}/{2}]\t'
+                    'Loss {train_loss.avg:.3f}\t'
+                    'acc {acc.avg:.3f}\t'
+                    '[{correct}/{total}]\t'
+                    'remain_time: {remain_time}'.format(
+                    epoch, batch_idx, len(trainloader),
+                    train_loss = train_loss,
+                    acc = acc,
+                    correct=int(correct),
+                    total=total,
+                    remain_time=remain_time,
+                        ))
+
+        if (batch_idx+1) % args.print_freq == 0:
             curr_idx = epoch * len(trainloader) + batch_idx
-            tb_logger.add_scalar("train/train_loss", train_loss / (batch_idx+1), curr_idx)
-            tb_logger.add_scalar("train/train_acc", 100.*correct/total, curr_idx)
-    return (train_loss/batch_idx, reg_loss/batch_idx, 100.*correct/total)
+            tb_logger.add_scalar("train/train_loss", train_loss.avg, curr_idx)
+            tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
+    return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
 def test(epoch):
     global best_acc
     net.eval()
-    test_loss = 0
+    test_loss = AverageMeter(100)
+    acc = AverageMeter(100)
     correct = 0
     total = 0
     for batch_idx, (inputs, targets) in enumerate(testloader):
@@ -172,28 +217,30 @@ def test(epoch):
             outputs = net(inputs)
             loss = criterion(outputs, targets)
 
-            test_loss += loss.item()
+            test_loss.update(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
-            correct += predicted.eq(targets.data).cpu().sum()
+            correct_idx = predicted.eq(targets.data).cpu().sum()
+            correct += correct_idx
 
+            acc.update(100. * correct / float(targets.size(0)))
         progress_bar(batch_idx, len(testloader),
                      'Loss: %.3f | Acc: %.3f%% (%d/%d)'
-                     % (test_loss/(batch_idx+1), 100.*correct/total,
+                     % (test_loss.avg, acc.avg,
                         correct, total))
     acc = 100.*correct/total
     if epoch == start_epoch + args.epoch - 1 or acc > best_acc:
         checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
-    tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, epoch * len(trainloader))
+    tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
-    return (test_loss/batch_idx, 100.*correct/total)
+    return (test_loss.avg, 100.*correct/total)
 
 
 def checkpoint(acc, epoch):
     # Save checkpoint.
-    print('Saving..')
+    logger.info('Saving..')
     state = {
         'net': net,
         'acc': acc,
@@ -216,6 +263,11 @@ def adjust_learning_rate(optimizer, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+if args.lr_ReduceLROnPlateau == True:
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=0.8, threshold=1e-5,
+    )
+
 
 if not os.path.exists(logname):
     with open(logname, 'w') as logfile:
@@ -226,7 +278,13 @@ if not os.path.exists(logname):
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
-    adjust_learning_rate(optimizer, epoch)
+    if args.lr_ReduceLROnPlateau == False:
+        adjust_learning_rate(optimizer, epoch)
+    else:
+        lr_scheduler.step(test_loss)
+    lr = optimizer.param_groups[0]['lr']
+    logger.info(epoch, lr)
+
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
         logwriter.writerow([epoch, train_loss, reg_loss, train_acc, test_loss,

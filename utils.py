@@ -123,3 +123,47 @@ def format_time(seconds):
     if f == '':
         f = '0ms'
     return f
+
+
+
+import logging
+def create_logger(name, log_file, level=logging.INFO):
+    l = logging.getLogger(name)
+    if not l.handlers:
+        formatter = logging.Formatter('[line:%(lineno)4d] %(message)s')
+        fh = logging.FileHandler(log_file)
+        fh.setFormatter(formatter)
+        sh = logging.StreamHandler()
+        sh.setFormatter(formatter)
+        l.setLevel(level)
+        l.addHandler(fh)
+        l.addHandler(sh)
+    l.propagate=False
+    return l
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self, reset_count=-1):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+        self.reset()
+        self.reset_count = reset_count
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        if self.count == self.reset_count:
+            self.reset()
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+

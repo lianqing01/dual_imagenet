@@ -48,6 +48,9 @@ parser.add_argument('--dual_lr', default=0.1, type=float)
 parser.add_argument('--dual_decay', default=1e-3, type=str)
 
 
+# for lr scheduler
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+
 args = parser.parse_args()
 args.dual_decay = float(args.dual_decay)
 
@@ -327,6 +330,10 @@ def adjust_learning_rate(optimizer, epoch):
         lr /= 10
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+if args.lr_ReduceLROnPlateau == True:
+    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=0.8, threshold=1e-5,
+    )
 
 
 if not os.path.exists(logname):
@@ -338,7 +345,10 @@ if not os.path.exists(logname):
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
-    adjust_learning_rate(optimizer, epoch)
+    if args.lr_ReduceLROnPlateau == False:
+        adjust_learning_rate(optimizer, epoch)
+    else:
+        lr_scheduler.step(test_loss)
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
         logwriter.writerow([epoch, train_loss, reg_loss, train_acc, test_loss,

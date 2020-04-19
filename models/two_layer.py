@@ -13,6 +13,8 @@ class Two_layer(nn.Module):
         self.constraint_affine = Constraint_Affine1d(num_classes)
 
     def forward(self, x):
+        bsz = x.size(0)
+        x = x.view(bsz, -1)
         x = self.layer1(x)
         x = self.relu(x)
         x = self.constraint_bn(x)
