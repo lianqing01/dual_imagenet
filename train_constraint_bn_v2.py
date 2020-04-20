@@ -54,6 +54,7 @@ parser.add_argument('--lambda_constraint_weight', default=1, type=float)
 parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
 parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
+parser.add_argument('--decay_constraint', default=-1, type=int)
 
 # two layer
 parser.add_argument('--two_layer', action='store_true', default=False)
@@ -70,6 +71,7 @@ parser.add_argument('--dataset', default='CIFAR10', type=str)
 # pretrain
 parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
 parser.add_argument('--max_pretrain_epoch', default=20, type=int)
+
 
 args = parser.parse_args()
 args.constraint_decay = float(args.constraint_decay)
@@ -458,7 +460,7 @@ def train(epoch):
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
             m.reset_norm_statistics()
-    return (train_loss.item(), reg_loss.item(), 100.*correct/total)
+    return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
 def test(epoch):
@@ -577,6 +579,8 @@ if args.initialize_by_pretrain == True:
 
 
 for epoch in range(start_epoch, args.epoch):
+    if epoch == args.decay_constraint:
+        args.lambda_constraint_weight = 0
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == False:

@@ -223,7 +223,7 @@ def test(epoch):
             correct_idx = predicted.eq(targets.data).cpu().sum()
             correct += correct_idx
 
-            acc.update(100. * correct / float(targets.size(0)))
+            acc.update(100. * correct_idx / float(targets.size(0)))
         progress_bar(batch_idx, len(testloader),
                      'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                      % (test_loss.avg, acc.avg,
@@ -283,7 +283,7 @@ for epoch in range(start_epoch, args.epoch):
     else:
         lr_scheduler.step(test_loss)
     lr = optimizer.param_groups[0]['lr']
-    logger.info(epoch, lr)
+    logger.info("epoch: {}, lr: {}".format(epoch, lr))
 
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
