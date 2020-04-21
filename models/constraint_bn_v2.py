@@ -3,6 +3,29 @@ from __future__ import division
 import torch
 from torch.nn.parameter import Parameter
 import torch.nn as nn
+from torch.autograd import Function
+
+class LagrangianFunction(Function):
+
+    @staticmethod
+    def forward(ctx, input, weight):
+        # input shape: [1, C, 1, 1]
+        # weight shape: [1, C, 1, 1]
+        # output shape: [1, C, 1, 1]
+        ctx.save_for_backward(input, weight)
+        output = input * weight
+        return output
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, weight = ctx.saved_tensors
+        grad_input = grad_weight = None
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output * weight
+        if ctx.needs_input_grad[1]:
+            # gradient ascent
+            grad_weight = -1 * grad_output * input
+        return grad_input, grad_weight
+
 
 class Constraint_Norm(nn.Module):
 
@@ -100,12 +123,7 @@ class Constraint_Lagrangian(nn.Module):
 
     def get_weighted_mean(self, x, norm_dim):
         mean = x.mean(dim=norm_dim)
-        if self.get_optimal_lagrangian == True:
-            best_xi = mean.detach() / self.weight_decay
-            self.weight_mean = best_xi * mean
-            self.xi_ = best_xi
-        else:
-            self.weight_mean = self.xi_ * mean
+        self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
         self.weight_mean = self.weight_mean.sum()
         self.weight_mean_abs = self.weight_mean.abs().sum()
         return mean
@@ -113,12 +131,7 @@ class Constraint_Lagrangian(nn.Module):
     def get_weighted_var(self, x, norm_dim):
         var = x**2 - 1
         var = var.mean(dim=norm_dim)
-        if self.get_optimal_lagrangian == True:
-            best_lambda = var.detach() / self.weight_decay
-            self.weight_var = best_lambda * var
-            self.lambda_ = best_lambda
-        else:
-            self.weight_var = self.lambda_ * var
+        self.weight_var = LagrangianFunction.apply(var, self.lambda_)
         self.weight_var = self.weight_var.sum()
         self.weight_var_abs = self.weight_var.abs().sum()
         return var

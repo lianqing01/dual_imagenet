@@ -64,6 +64,7 @@ parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 
 
+
 # dataset
 parser.add_argument('--dataset', default='CIFAR10', type=str)
 
@@ -179,147 +180,22 @@ for m in net.modules():
         constraint_param.extend(list(map(id, m.parameters())))
 origin_param = filter(lambda p:id(p) not in constraint_param, net.parameters())
 
-optimizer = optim.SGD(origin_param, lr=args.lr, momentum=0.9,
+optimizer = optim.SGD([
+                       {'params': origin_param},
+                       {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
+                            'lr': args.constraint_lr,
+                            'weight_decay': args.constraint_decay}
+                       ],
+                      lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
+'''
 constraint_optimizer = (optim.SGD(
                     filter(lambda p:id(p) in constraint_param, net.parameters()),
                     lr=args.constraint_lr, momentum=0.9,
                     weight_decay=args.constraint_decay
                     ))
 
-
-
-def initialize_by_pretrain(epoch):
-    logger.info('\n Pretrain Epoch: %d' % epoch)
-    net.train()
-    train_loss = AverageMeter(100)
-    acc = AverageMeter(100)
-    batch_time = AverageMeter()
-    reg_loss = AverageMeter(100)
-    correct = 0
-    total = 0
-    mean = 0
-    var = 0
-    lambda_ = 0
-    xi_ = 0
-
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
-            m.reset_norm_statistics()
-
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
-        start = time.time()
-        if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda()
-        bsz = inputs.size(0)
-
-
-        outputs = net(inputs)
-        if args.optim_loss == 'mse':
-            targets = targets.float()
-        loss = criterion(outputs, targets)
-
-
-        # constraint loss
-        weight_mean = 0
-        weight_var = 0
-        for m in net.modules():
-            if isinstance(m, Constraint_Lagrangian):
-                weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                weight_mean += weight_mean_
-                weight_var += weight_var_
-
-        constraint_loss = weight_mean + weight_var
-        constraint_loss = -1 * args.lambda_constraint_weight * constraint_loss
-
-        # optimize constraint loss
-        if args.get_optimal_lagrangian == False and args.constraint_lr != 0:
-            constraint_optimizer.zero_grad()
-            constraint_loss.backward(retain_graph=True)
-            constraint_optimizer.step()
-
-        train_loss.update(loss.item())
-        loss = -constraint_loss
-
-        # optimize
-        _, predicted = torch.max(outputs.data, 1)
-        total += targets.size(0)
-        correct_idx = predicted.eq(targets.data).cpu().sum().float()
-        correct += correct_idx
-        acc.update(100. * correct_idx / float(targets.size(0)))
-
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        optimizer.step()
-        batch_time.update(time.time() - start)
-        remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
-        remain_time = remain_iter * batch_time.avg
-        t_m, t_s = divmod(remain_time, 60)
-        t_h, t_m = divmod(t_m, 60)
-        remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-
-
-        if (batch_idx+1) % args.print_freq == 0:
-            logger.info('Train: [{0}][{1}/{2}]\t'
-                    'Loss {train_loss.avg:.3f}\t'
-                    'Constraint mean {corat_mean:.4f}\t'
-                    'Constraint var {corat_var:.4f}\t'
-                    'Constraint lambda {corat_lambda:.4f}\t'
-                    'Constraint xi {corat_xi:.4f}\t'
-                    'mean {mean:.4f}\t'
-                    'var {var:.4f}\t'
-                    'acc {acc.avg:.3f}\t'
-                    '[{correct}/{total}]\t'
-                    'remain_time: {remain_time}'.format(
-                    epoch, batch_idx, len(trainloader),
-                    train_loss = train_loss,
-                    corat_mean = -1 * weight_mean.itam(),
-                    corat_var = -1 * weight_var.item(),
-                    corat_lambda = lambda_,
-                    corat_xi = xi_,
-                    mean = mean.item(),
-                    var = var.item(),
-                    acc = acc,
-                    correct=int(correct),
-                    total=total,
-                    remain_time=remain_time,
-                        ))
-
-        if (batch_idx+1) % 10 == 0:
-            mean = []
-            var = []
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    mean_, var_ = m.get_mean_var()
-                    mean.append(mean_.abs())
-                    var.append(var_.abs())
-            mean = torch.mean(torch.stack(mean))
-            var = torch.mean(torch.stack(var))
-            curr_idx = epoch * len(trainloader) + batch_idx
-            tb_logger.add_scalar("initialize/train_loss", train_loss.avg, curr_idx)
-            tb_logger.add_scalar("initialize/train_acc", acc.avg, curr_idx)
-            tb_logger.add_scalar("initialize/norm_mean", mean, curr_idx)
-            tb_logger.add_scalar("initialize/norm_var", var, curr_idx)
-            tb_logger.add_scalar("initialize/constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
-            tb_logger.add_scalar("initialize/constraint_loss_var", -1 * weight_var.item(), curr_idx)
-            # get the constraint weight
-            lambda_ = []
-            xi_ = []
-            for m in net.modules():
-                if isinstance(m, Constraint_Lagrangian):
-                    lambda_.append(m.lambda_.data.abs().mean())
-                    xi_.append(m.xi_.data.abs().mean())
-            lambda_ = torch.mean(torch.stack(lambda_))
-            xi_ = torch.mean(torch.stack(xi_))
-            tb_logger.add_scalar("initialize/constraint_lambda_", lambda_.item(), curr_idx)
-            tb_logger.add_scalar("initialize/constraint_xi_", xi_.item(), curr_idx)
-
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
-            m.reset_norm_statistics()
-    return (mean, var)
-
+'''
 
 
 def train(epoch):
@@ -368,18 +244,14 @@ def train(epoch):
                 weight_var_abs += weight_var_abs_
 
         constraint_loss = weight_mean + weight_var
-        constraint_loss = -1 * args.lambda_constraint_weight * constraint_loss
+        constraint_loss = args.lambda_constraint_weight * constraint_loss
         weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
         weight_var_abs = args.lambda_constraint_weight * weight_var_abs
 
         # optimize constraint loss
-        if args.get_optimal_lagrangian == False:
-            constraint_optimizer.zero_grad()
-            constraint_loss.backward(retain_graph=True)
-            constraint_optimizer.step()
 
         train_loss.update(loss.item())
-        loss -= constraint_loss
+        loss += constraint_loss
 
         # optimize
         _, predicted = torch.max(outputs.data, 1)
@@ -567,6 +439,7 @@ else:
 
 
 
+
 if not os.path.exists(logname):
     with open(logname, 'w') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
@@ -588,6 +461,11 @@ for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     lr_scheduler.step(test_loss)
+    lr = optimizer.param_groups[0]['lr']
+    lr1 = optimizer.param_groups[1]['lr']
+    logger.info("epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
+
+
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
         logwriter.writerow([epoch, train_loss, reg_loss, train_acc, test_loss,
