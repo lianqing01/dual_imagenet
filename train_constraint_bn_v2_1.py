@@ -462,7 +462,10 @@ for epoch in range(start_epoch, args.epoch):
         args.lambda_constraint_weight = 0
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
-    lr_scheduler.step(test_loss)
+    if args.lr_ReduceLROnPlateau == True:
+        lr_scheduler.step(test_loss)
+    else:
+        lr_scheduler.step()
     lr = optimizer.param_groups[0]['lr']
     lr1 = optimizer.param_groups[1]['lr']
     logger.info("epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
