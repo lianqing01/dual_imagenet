@@ -88,6 +88,8 @@ if args.seed != 0:
 
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
+for key, val in vars(args).items():
+    logger.info("{:16} {}".format(key, val))
 
 # Data
 logger.info('==> Preparing data..')
