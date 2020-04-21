@@ -113,7 +113,7 @@ transform_test = transforms.Compose([
 ])
 
 if args.dataset == 'CIFAR10':
-    trainset = datasets.CIFAR10(root='~/data', train=True, download=False,
+    trainset = datasets.CIFAR10(root='~/data', train=True, download=True,
                             transform=transform_train)
     num_classes=10
 elif args.dataset == 'CIFAR100':
@@ -125,7 +125,7 @@ trainloader = torch.utils.data.DataLoader(trainset,
                                           shuffle=True, num_workers=8)
 
 if args.dataset == 'CIFAR10':
-    testset = datasets.CIFAR10(root='~/data', train=False, download=False,
+    testset = datasets.CIFAR10(root='~/data', train=False, download=True,
                            transform=transform_test)
 elif args.dataset == 'CIFAR100':
     testset = dataset.CIFAR100(root='~/data', train=False, download=True,
