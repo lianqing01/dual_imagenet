@@ -385,8 +385,16 @@ def test(epoch):
     curr_idx = epoch * len(trainloader)
     tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, curr_idx)
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, curr_idx)
+    tb_logger.add_scalar("test/test_loss_epoch", test_loss/batch_idx, epoch)
+    tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
+
     tb_logger.add_scalar("test/norm_mean(abs)", mean, curr_idx)
     tb_logger.add_scalar("test/norm_var-1(abs)", var, curr_idx)
+
+    tb_logger.add_scalar("test/norm_mean(abs)_epoch", mean, epoch)
+    tb_logger.add_scalar("test/norm_var-1(abs)_epoch", var, epoch)
+
+
     lambda_ = []
     xi_ = []
     for m in net.modules():

@@ -45,6 +45,8 @@ parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+parser.add_argument('--schedule', default=[100,150])
+
 
 # dataset
 parser.add_argument('--dataset', default='CIFAR10', type=str)
@@ -235,6 +237,8 @@ def test(epoch):
         best_acc = acc
     tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
+    tb_logger.add_scalar("test/test_loss_epoch", test_loss.avg, epoch)
+    tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
     return (test_loss.avg, 100.*correct/total)
 
 
@@ -267,6 +271,9 @@ if args.lr_ReduceLROnPlateau == True:
     lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, factor=0.8, threshold=1e-5,
     )
+else:
+    lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
+        optimizer, milestones = args.schedule)
 
 
 if not os.path.exists(logname):
@@ -278,10 +285,11 @@ if not os.path.exists(logname):
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
-    if args.lr_ReduceLROnPlateau == False:
-        adjust_learning_rate(optimizer, epoch)
-    else:
+    if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
+    else:
+        lr_scheduler.step()
+
     lr = optimizer.param_groups[0]['lr']
     logger.info("epoch: {}, lr: {}".format(epoch, lr))
 
