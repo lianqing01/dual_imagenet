@@ -3,4 +3,5 @@ python train_constraint_bn_v2_1.py --model resnet_nobnv2_50 \
     --lr 0.01 \
     --batch-size 8 \
     --constraint_lr 0 \
+    --lambda_constraint_weight 0
 

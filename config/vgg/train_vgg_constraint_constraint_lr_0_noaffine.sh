@@ -1,4 +1,5 @@
-python train_constraint_bn_v2.py --model vgg16_constraint_bn_v2_noaffine \
-    --log_dir vgg/oracle_vgg16_constraint_constraint_lr_0_noaffine \
+python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v2_noaffine \
+    --log_dir vgg/oracle_vgg16_nobn_exp002 \
     --lr 0.05 \
-    --constraint_lr 0
+    --constraint_lr 0 \
+    --lambda_constraint_weight 0

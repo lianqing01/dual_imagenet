@@ -5,8 +5,10 @@
 # This source code is licensed under the license found in the LICENSE file in
 # the root directory of this source tree.
 from __future__ import print_function
+from comet_ml import Experiment
 
 import argparse
+import os.path as osp
 import time
 import csv
 import os
@@ -31,6 +33,7 @@ parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--model', default="ResNet18", type=str,
                     help='model type (default: ResNet18)')
+parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
@@ -66,6 +69,18 @@ if args.seed != 0:
 
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
+
+experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
+                        project_name="constraint_bn", workspace="lianqing11",
+                        auto_output_logging=False,
+                        log_env_gpu=False,
+                        log_env_cpu=False,
+                        log_env_host=False)
+experiment.set_name(args.log_dir + time.asctime(time.localtime(time.time())).replace(" ", "-"))
+
+
+experiment.add_tag('pytorch')
+experiment.log_parameters(args.__dict__)
 # Data
 logger.info('==> Preparing data..')
 if args.augment:
@@ -117,16 +132,14 @@ if args.resume:
     # Load checkpoint.
     logger.info('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/ckpt.t7' + args.name + '_'
-                            + str(args.seed))
+    checkpoint = torch.load(args.load_model)
     net = checkpoint['net']
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch'] + 1
-    rng_state = checkpoint['rng_state']
-    torch.set_rng_state(rng_state)
 else:
     logger.info('==> Building model..')
     net = models.__dict__[args.model](num_classes=num_classes)
+
 
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
@@ -153,6 +166,7 @@ def train(epoch):
     net.train()
     train_loss = AverageMeter(100)
     reg_loss = AverageMeter(100)
+    train_loss_avg = 0
     correct = 0
     total = 0
     acc = AverageMeter(100)
@@ -170,6 +184,7 @@ def train(epoch):
         correct_idx = predicted.eq(targets.data).cpu().sum().float()
         correct += correct_idx
         acc.update(100. * correct_idx / float(targets.size(0)))
+        train_loss_avg += loss.item()
 
         optimizer.zero_grad()
         loss.backward()
@@ -201,6 +216,15 @@ def train(epoch):
             curr_idx = epoch * len(trainloader) + batch_idx
             tb_logger.add_scalar("train/train_loss", train_loss.avg, curr_idx)
             tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
+            experiment.log_metric("loss_step", train_loss.avg, curr_idx)
+            experiment.log_metric("acc_step", acc.avg, curr_idx)
+
+    tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
+    tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
+    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+    experiment.log_metric("loss_epoch", train_loss_avg/len(trainloader), epoch)
+
+    logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
@@ -239,6 +263,11 @@ def test(epoch):
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
     tb_logger.add_scalar("test/test_loss_epoch", test_loss.avg, epoch)
     tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
+    experiment.log_metric("loss_step", test_loss.avg, epoch * len(trainloader))
+    experiment.log_metric("acc_step", 100.*correct/total, epoch*len(trainloader))
+    experiment.log_metric("loss_epoch", test_loss.avg, epoch)
+    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+
     return (test_loss.avg, 100.*correct/total)
 
 
@@ -256,6 +285,17 @@ def checkpoint(acc, epoch):
     torch.save(state, './checkpoint/ckpt.t7' + args.name + '_'
                + str(args.seed))
 
+
+def save_checkpoint(acc, epoch):
+    logger.info("Saving, epoch: {}".format(epoch))
+    state = {
+        'state_dict': net.state_dict(),
+        'acc': acc,
+        'epoch': epoch,
+        'optim': optimizer.state_dict(),
+    }
+    save_name = osp.join("results/" + args.log_dir, "epoch_{}.pth".format(epoch))
+    torch.save(state, save_name)
 
 def adjust_learning_rate(optimizer, epoch):
     """decrease the learning rate at 100 and 150 epoch"""
@@ -275,6 +315,10 @@ else:
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones = args.schedule)
 
+lr_scheduler.step(start_epoch)
+lr = optimizer.param_groups[0]['lr']
+logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
+
 
 if not os.path.exists(logname):
     with open(logname, 'w') as logfile:
@@ -283,8 +327,10 @@ if not os.path.exists(logname):
                             'test loss', 'test acc'])
 
 for epoch in range(start_epoch, args.epoch):
-    train_loss, reg_loss, train_acc = train(epoch)
-    test_loss, test_acc = test(epoch)
+    with experiment.train():
+        train_loss, reg_loss, train_acc = train(epoch)
+    with experiment.test():
+        test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
@@ -292,6 +338,8 @@ for epoch in range(start_epoch, args.epoch):
 
     lr = optimizer.param_groups[0]['lr']
     logger.info("epoch: {}, lr: {}".format(epoch, lr))
+    if ((epoch+1) % 10) == 0:
+        save_checkpoint(test_acc, epoch)
 
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')

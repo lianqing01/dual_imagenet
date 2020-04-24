@@ -9,12 +9,14 @@ from __future__ import print_function
 import argparse
 import csv
 import os
+from comet_ml import Experiment
 
 import numpy as np
 import torch
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
+import os.path as osp
 import torch.optim as optim
 import time
 import torchvision.transforms as transforms
@@ -33,6 +35,8 @@ parser.add_argument('--resume', '-r', action='store_true',
                     help='resume from checkpoint')
 parser.add_argument('--model', default="ResNet18", type=str,
                     help='model type (default: ResNet18)')
+parser.add_argument('--load_model', type=str, default='')
+
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
@@ -50,7 +54,7 @@ parser.add_argument('--print_freq', default=10, type=int)
 
 
 # param for constraint norm
-parser.add_argument('--lambda_constraint_weight', default=1, type=float)
+parser.add_argument('--lambda_constraint_weight', default=0, type=float)
 parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
 parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
@@ -62,6 +66,7 @@ parser.add_argument('--two_layer', action='store_true', default=False)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--decrease_affine_lr', default=None, type=float)
 
 
 
@@ -90,7 +95,17 @@ os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 for key, val in vars(args).items():
     logger.info("{:16} {}".format(key, val))
+experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
+                        project_name="constraint_bn", workspace="lianqing11",
+                        auto_output_logging=False,
+                        log_env_gpu=False,
+                        log_env_cpu=False,
+                        log_env_host=False)
+experiment.set_name(args.log_dir + time.asctime(time.localtime(time.time())).replace(" ", "-"))
 
+experiment.add_tag('pytorch')
+experiment.log_parameters(args.__dict__)
+#
 # Data
 logger.info('==> Preparing data..')
 if args.augment:
@@ -138,30 +153,8 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
 
 
 
-
-# Model
-if args.resume:
-    # Load checkpoint.
-    logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load('./checkpoint/ckpt.t7' + args.name + '_'
-                            + str(args.seed))
-    net = checkpoint['net']
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
-    rng_state = checkpoint['rng_state']
-    torch.set_rng_state(rng_state)
-else:
-    logger.info('==> Building model..')
-    net = models.__dict__[args.model](num_classes=args.num_classes)
-
-if not os.path.isdir('results/{}'.format(args.log_dir)):
-    os.makedirs('results/{}'.format(args.log_dir))
-logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
-           + str(args.seed) + '.csv')
-
-tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
-
+logger.info('==> Building model..')
+net = models.__dict__[args.model](num_classes=args.num_classes)
 if use_cuda:
     net.cuda()
     net = torch.nn.DataParallel(net)
@@ -169,24 +162,30 @@ if use_cuda:
     cudnn.benchmark = True
     logger.info('Using CUDA..')
 
-if args.optim_loss == "cross_entropy":
-    criterion = nn.CrossEntropyLoss()
-elif args.optim_loss == "mse":
-    criterion = nn.MSELoss()
-logger.info(args.lr)
 constraint_param = []
 for m in net.modules():
     if isinstance(m, Constraint_Lagrangian):
         m.weight_decay = args.constraint_decay
         m.get_optimal_lagrangian = args.get_optimal_lagrangian
         constraint_param.extend(list(map(id, m.parameters())))
-origin_param = filter(lambda p:id(p) not in constraint_param, net.parameters())
+affine_param = []
+for m in net.modules():
+    if isinstance(m, Constraint_Norm):
+        affine_param.extend(list(map(id, m.parameters())))
+
+origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, net.parameters())
+if args.decrease_affine_lr is not None:
+    affine_lr = args.decrease_affine_lr * args.lr
+else:
+    affine_lr = args.lr
 
 optimizer = optim.SGD([
                        {'params': origin_param},
                        {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
                             'lr': args.constraint_lr,
-                            'weight_decay': args.constraint_decay}
+                            'weight_decay': args.constraint_decay},
+                       {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, net.parameters()),
+                            'lr': affine_lr}
                        ],
                       lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
@@ -199,6 +198,31 @@ constraint_optimizer = (optim.SGD(
 
 '''
 
+# Model
+if args.resume:
+    # Load checkpoint.
+    logger.info('==> Resuming from checkpoint..')
+    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load(args.load_model)
+
+    net.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optim'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+
+if not os.path.isdir('results/{}'.format(args.log_dir)):
+    os.makedirs('results/{}'.format(args.log_dir))
+logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
+           + str(args.seed) + '.csv')
+
+tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
+
+
+if args.optim_loss == "cross_entropy":
+    criterion = nn.CrossEntropyLoss()
+elif args.optim_loss == "mse":
+    criterion = nn.MSELoss()
+logger.info(args.lr)
 
 def train(epoch):
     logger.info('\nEpoch: %d' % epoch)
@@ -207,6 +231,7 @@ def train(epoch):
     acc = AverageMeter(100)
     batch_time = AverageMeter()
     reg_loss = AverageMeter(100)
+    train_loss_avg = 0
     correct = 0
     total = 0
     mean = 0
@@ -253,6 +278,7 @@ def train(epoch):
         # optimize constraint loss
 
         train_loss.update(loss.item())
+        train_loss_avg += loss.item()
         loss += constraint_loss
 
         # optimize
@@ -320,6 +346,16 @@ def train(epoch):
             tb_logger.add_scalar("train/weight_var-1(abs)", weight_var_abs.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_loss_var", -1 * weight_var.item(), curr_idx)
+
+            experiment.log_metric("loss_step", train_loss.avg, curr_idx)
+            experiment.log_metric("acc_step", acc.avg, curr_idx)
+            experiment.log_metric("norm_mean(abs)", mean.item(), curr_idx)
+            experiment.log_metric("norm_var-1(abs)", var.item(), curr_idx)
+            experiment.log_metric("weight_mean(abs)", weight_mean_abs.item(), curr_idx)
+            experiment.log_metric("weight_var-1(abs)", weight_var_abs.item(), curr_idx)
+            experiment.log_metric("constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
+            experiment.log_metric("constraint_loss_var", -1 * weight_var.item(), curr_idx)
+
             # get the constraint weight
             lambda_ = []
             xi_ = []
@@ -331,6 +367,17 @@ def train(epoch):
             xi_ = torch.mean(torch.stack(xi_))
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_xi_", xi_.item(), curr_idx)
+
+            experiment.log_metric("constraint_lambda_", lambda_.item(), curr_idx)
+            experiment.log_metric("constraint_xi_", xi_.item(), curr_idx)
+
+    tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
+    tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
+
+    experiment.log_metric("loss_epoch", train_loss_avg / len(trainloader), epoch)
+    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+
+    logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
 
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
@@ -394,6 +441,17 @@ def test(epoch):
     tb_logger.add_scalar("test/norm_mean(abs)_epoch", mean, epoch)
     tb_logger.add_scalar("test/norm_var-1(abs)_epoch", var, epoch)
 
+    experiment.log_metric("loss_step", test_loss/batch_idx, curr_idx)
+    experiment.log_metric("acc_step", 100.*correct/total, curr_idx)
+    experiment.log_metric("loss_epoch", test_loss/batch_idx, epoch)
+    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+
+    experiment.log_metric("norm_mean(abs)", mean.item(), curr_idx)
+    experiment.log_metric("norm_var-1(abs)", var.item(), curr_idx)
+
+    experiment.log_metric("norm_mean(abs)_epoch", mean.item(), epoch)
+    experiment.log_metric("norm_var-1(abs)_epoch", var.item(), epoch)
+
 
     lambda_ = []
     xi_ = []
@@ -405,6 +463,8 @@ def test(epoch):
     xi_ = torch.mean(torch.stack(xi_))
     tb_logger.add_scalar("test/constraint_lambda_", lambda_.item(), curr_idx)
     tb_logger.add_scalar("test/constraint_xi_", xi_.item(), curr_idx)
+    experiment.log_metric("test/constraint_lambda_", lambda_.item(), curr_idx)
+    experiment.log_metric("test/constraint_xi_", xi_.item(), curr_idx)
 
 
     for m in net.modules():
@@ -427,6 +487,19 @@ def checkpoint(acc, epoch):
         os.makedirs('checkpoint')
     torch.save(state, './checkpoint/ckpt.t7' + args.name + '_'
                + str(args.seed))
+
+
+def save_checkpoint(acc, epoch):
+    logger.info("Saving, epoch: {}".format(epoch))
+    state = {
+        'state_dict': net.state_dict(),
+        'acc': acc,
+        'epoch': epoch,
+        'optim': optimizer.state_dict(),
+    }
+    save_name = osp.join("results/" + args.log_dir, "epoch_{}.pth".format(epoch))
+    print(save_name)
+    torch.save(state, save_name)
 
 
 def adjust_learning_rate(optimizer, epoch):
@@ -465,11 +538,22 @@ if args.initialize_by_pretrain == True:
             break
 
 
+lr_scheduler.step(start_epoch)
+lr = optimizer.param_groups[0]['lr']
+logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
+
+
 for epoch in range(start_epoch, args.epoch):
+    lr = optimizer.param_groups[0]['lr']
+    lr1 = optimizer.param_groups[1]['lr']
+    logger.info("begin: epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
+
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
-    train_loss, reg_loss, train_acc = train(epoch)
-    test_loss, test_acc = test(epoch)
+    with experiment.train():
+        train_loss, reg_loss, train_acc = train(epoch)
+    with experiment.test():
+        test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
@@ -477,7 +561,8 @@ for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
     lr1 = optimizer.param_groups[1]['lr']
     logger.info("epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
-
+    if ((epoch+1) % 10) == 0:
+        save_checkpoint(test_acc, epoch)
 
     with open(logname, 'a') as logfile:
         logwriter = csv.writer(logfile, delimiter=',')
