@@ -66,7 +66,7 @@ parser.add_argument('--two_layer', action='store_true', default=False)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
-parser.add_argument('--decrease_affine_lr', default=None, type=float)
+parser.add_argument('--decrease_affine_lr', default=1, type=float)
 
 
 
@@ -173,13 +173,27 @@ for m in net.modules():
     if isinstance(m, Constraint_Norm):
         affine_param.extend(list(map(id, m.parameters())))
 
-origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, net.parameters())
-if args.decrease_affine_lr is not None:
-    affine_lr = args.decrease_affine_lr * args.lr
-else:
-    affine_lr = args.lr
 
-optimizer = optim.SGD([
+if args.decrease_affine_lr == 1:
+    origin_param = filter(lambda p:id(p) not in constraint_param, net.parameters())
+
+    optimizer = optim.SGD([
+                       {'params': origin_param},
+                       {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
+                            'lr': args.constraint_lr,
+                            'weight_decay': args.constraint_decay},
+                       ],
+                      lr=args.lr, momentum=0.9,
+                      weight_decay=args.decay)
+
+else:
+    origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, net.parameters())
+    if args.decrease_affine_lr is not None:
+        affine_lr = args.decrease_affine_lr * args.lr
+    else:
+        affine_lr = args.lr
+
+    optimizer = optim.SGD([
                        {'params': origin_param},
                        {'params':  filter(lambda p:id(p) in constraint_param, net.parameters()),
                             'lr': args.constraint_lr,
