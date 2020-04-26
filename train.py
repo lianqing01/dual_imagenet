@@ -21,7 +21,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-
+import wandb
 import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
@@ -69,6 +69,7 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 torch.manual_seed(args.seed)
 
+args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
@@ -78,11 +79,15 @@ experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
                         log_env_gpu=False,
                         log_env_cpu=False,
                         log_env_host=False)
-experiment.set_name(args.log_dir + time.asctime(time.localtime(time.time())).replace(" ", "-"))
+experiment.set_name(args.log_dir)
 
 
 experiment.add_tag('pytorch')
 experiment.log_parameters(args.__dict__)
+wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
+           name=args.log_dir,)
+wandb.config.update(args)
+
 # Data
 logger.info('==> Preparing data..')
 if args.augment:
@@ -157,6 +162,7 @@ if use_cuda:
 
 criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
+wandb.watch(net)
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
@@ -249,11 +255,15 @@ def train(epoch):
             tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
             experiment.log_metric("loss_step", train_loss.avg, curr_idx)
             experiment.log_metric("acc_step", acc.avg, curr_idx)
+            #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
+            #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
     experiment.log_metric("loss_epoch", train_loss_avg/len(trainloader), epoch)
+    wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
+    wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
 
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
@@ -277,7 +287,7 @@ def test(epoch):
             test_loss.update(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
-            correct_idx = predicted.eq(targets.data).cpu().sum()
+            correct_idx = predicted.eq(targets.data).sum().item()
             correct += correct_idx
 
             acc.update(100. * correct_idx / float(targets.size(0)))
@@ -298,6 +308,8 @@ def test(epoch):
     experiment.log_metric("acc_step", 100.*correct/total, epoch*len(trainloader))
     experiment.log_metric("loss_epoch", test_loss.avg, epoch)
     experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+    wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
+    wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
 
     return (test_loss.avg, 100.*correct/total)
 
