@@ -59,6 +59,7 @@ parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
 parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
 parser.add_argument('--decay_constraint', default=-1, type=int)
+parser.add_argument('--update_affine_only', default=False, type=bool)
 
 # two layer
 parser.add_argument('--two_layer', action='store_true', default=False)
@@ -67,6 +68,7 @@ parser.add_argument('--two_layer', action='store_true', default=False)
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--decrease_affine_lr', default=1, type=float)
+parser.add_argument('--decrease_with_conv_bias', default=False, type=bool)
 
 
 
@@ -172,6 +174,10 @@ affine_param = []
 for m in net.modules():
     if isinstance(m, Constraint_Norm):
         affine_param.extend(list(map(id, m.parameters())))
+if args.decrease_with_conv_bias:
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d):
+            affine_param.extend(list(map(id, m.bias)))
 
 
 if args.decrease_affine_lr == 1:
@@ -237,6 +243,12 @@ if args.optim_loss == "cross_entropy":
 elif args.optim_loss == "mse":
     criterion = nn.MSELoss()
 logger.info(args.lr)
+
+if args.update_affine_only == True:
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.update_affine_only = True
+
 
 def train(epoch):
     logger.info('\nEpoch: %d' % epoch)

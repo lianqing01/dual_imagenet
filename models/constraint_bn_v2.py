@@ -49,6 +49,7 @@ class Constraint_Norm(nn.Module):
         self.register_buffer("mean", torch.zeros(num_features))
         self.register_buffer("var", torch.zeros(num_features))
         self.register_buffer("tracking_times", torch.tensor(0, dtype=torch.long))
+        self.update_affine_only = False
 
     def get_mean_var(self):
         return (self.mean.abs().mean() / (self.tracking_times + 1e-11), self.var.abs().mean() / (self.tracking_times + 1e-11))
@@ -62,14 +63,27 @@ class Constraint_Norm(nn.Module):
 
         # mean
         if self.pre_affine:
-            x = x - self.mu_
-        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+            if self.update_affine_only:
+                x_ = x.detach() - self.mu_
+                mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+                x = x - self.mu_.detach()
+            else:
+                x = x - self.mu_
+            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+        else:
+            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         self.mean += mean.detach()
-
         # var
         if self.pre_affine:
-            x = self.gamma_ * x
-        var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+            if self.update_affine_only:
+                x_ = x.detach() * self.gamma_
+                var = self.lagrangian.get_weighted_var(x_, self.norm_dim)
+                x = x * self.gamma_.detach()
+            else:
+                x = x * self.gamma_
+                var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+        else:
+            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
         self.var += var.detach()
 
         self.tracking_times += 1
