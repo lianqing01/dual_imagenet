@@ -105,7 +105,7 @@ transform_test = transforms.Compose([
 ])
 
 if args.dataset == 'CIFAR10':
-    trainset = datasets.CIFAR10(root='~/data', train=True, download=False,
+    trainset = datasets.CIFAR10(root='~/data', train=True, download=True,
                             transform=transform_train)
     num_classes=10
 elif args.dataset == 'CIFAR100':
