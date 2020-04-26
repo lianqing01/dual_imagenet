@@ -26,7 +26,7 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
-
+import wandb
 from models.constraint_bn_v2 import *
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
@@ -59,6 +59,7 @@ parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
 parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
 parser.add_argument('--decay_constraint', default=-1, type=int)
+parser.add_argument('--update_affine_only', default=False, type=bool)
 
 # two layer
 parser.add_argument('--two_layer', action='store_true', default=False)
@@ -67,6 +68,7 @@ parser.add_argument('--two_layer', action='store_true', default=False)
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--decrease_affine_lr', default=1, type=float)
+parser.add_argument('--decrease_with_conv_bias', default=False, type=bool)
 
 
 
@@ -91,17 +93,25 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 if args.seed != 0:
     torch.manual_seed(args.seed)
 
+args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
-for key, val in vars(args).items():
-    logger.info("{:16} {}".format(key, val))
+
 experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
                         project_name="constraint_bn", workspace="lianqing11",
                         auto_output_logging=False,
                         log_env_gpu=False,
                         log_env_cpu=False,
                         log_env_host=False)
-experiment.set_name(args.log_dir + time.asctime(time.localtime(time.time())).replace(" ", "-"))
+experiment.set_name(args.log_dir)
+
+
+experiment.add_tag('pytorch')
+experiment.log_parameters(args.__dict__)
+wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
+           name=args.log_dir,)
+wandb.config.update(args)
+
 
 experiment.add_tag('pytorch')
 experiment.log_parameters(args.__dict__)
@@ -172,6 +182,10 @@ affine_param = []
 for m in net.modules():
     if isinstance(m, Constraint_Norm):
         affine_param.extend(list(map(id, m.parameters())))
+if args.decrease_with_conv_bias:
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d):
+            affine_param.extend(list(map(id, m.bias)))
 
 
 if args.decrease_affine_lr == 1:
@@ -237,6 +251,12 @@ if args.optim_loss == "cross_entropy":
 elif args.optim_loss == "mse":
     criterion = nn.MSELoss()
 logger.info(args.lr)
+
+if args.update_affine_only == True:
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.update_affine_only = True
+
 
 def train(epoch):
     logger.info('\nEpoch: %d' % epoch)
@@ -390,6 +410,14 @@ def train(epoch):
 
     experiment.log_metric("loss_epoch", train_loss_avg / len(trainloader), epoch)
     experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
+    wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
+    wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
+    wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
+    wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
+    wandb.log({"train/weight_mean(abs)": weight_mean_abs.item()},step=epoch)
+    wandb.log({"train/weight_var-1(abs)": weight_var_abs.item()}, step=epoch)
+    wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
+    wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
 
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
 
@@ -479,6 +507,13 @@ def test(epoch):
     tb_logger.add_scalar("test/constraint_xi_", xi_.item(), curr_idx)
     experiment.log_metric("test/constraint_lambda_", lambda_.item(), curr_idx)
     experiment.log_metric("test/constraint_xi_", xi_.item(), curr_idx)
+    wandb.log({"test/loss_epoch": test_loss/batch_idx}, step=epoch)
+    wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
+
+    wandb.log({"test/norm_mean(abs)_epoch":mean.item()}, step=epoch)
+    wandb.log({"test/norm_var-1(abs)_epoch":var.item()}, step=epoch)
+
+
 
 
     for m in net.modules():

@@ -1,4 +1,5 @@
 *npy
+*pyc
 *data
 *ckpt
 *log
@@ -7,3 +8,5 @@ data/*
 checkpoint/*
 old_cache/*
 old_results/*
+old_res*
+*pyc

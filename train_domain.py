@@ -21,11 +21,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import wandb
+
 import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
+import yaml
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -36,8 +37,8 @@ parser.add_argument('--model', default="ResNet18", type=str,
 parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
-parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--epoch', default=200, type=int,
+parser.add_argument('--batch-size', default=64, type=int, help='batch size')
+parser.add_argument('--epoch', default=100, type=int,
                     help='total epochs to run')
 parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
@@ -48,7 +49,7 @@ parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
-parser.add_argument('--schedule', default=[100,150])
+parser.add_argument('--schedule', default=[60,80])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
 
@@ -61,6 +62,10 @@ parser.add_argument('--print_freq', default=10, type=int)
 
 
 args = parser.parse_args()
+with open("config/domain.yaml") as f:
+    config = yaml.load(f)
+for k, v in config['common'].items():
+    setattr(args, k, v)
 
 use_cuda = torch.cuda.is_available()
 
@@ -69,7 +74,6 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
 torch.manual_seed(args.seed)
 
-args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
@@ -79,59 +83,112 @@ experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
                         log_env_gpu=False,
                         log_env_cpu=False,
                         log_env_host=False)
-experiment.set_name(args.log_dir)
+experiment.set_name(args.log_dir + time.asctime(time.localtime(time.time())).replace(" ", "-"))
 
 
 experiment.add_tag('pytorch')
 experiment.log_parameters(args.__dict__)
-wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
-           name=args.log_dir,)
-wandb.config.update(args)
-
 # Data
 logger.info('==> Preparing data..')
-if args.augment:
-    transform_train = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
+
+
+from torch.utils.data import Dataset
+import torchvision
+import pandas as pd
+from PIL import Image
+from torch.utils.data import DataLoader
+class NormalDataset(Dataset):
+    def __init__(self, root_dir, meta_file, is_train=True, args=None, transform=None):
+        self.root_dir = root_dir
+        self.transform = transform
+        print("building dataset from %s"%meta_file)
+        self.metas = pd.read_csv(meta_file, sep=" ",header=None)
+        print("read meta done")
+        self.num = len(self.metas)
+    def __len__(self):
+        return self.num
+
+
+    def __getitem__(self, idx):
+        filename = osp.join(self.root_dir, self.metas.loc[idx, 0])
+
+        label = self.metas.loc[idx, 1]
+        ## memcached
+        img = Image.open(filename).convert('RGB')
+        #img = np.zeros((350, 350, 3), dtype=np.uint8)
+        #img = Image.fromarray(img)
+        #cls = 0
+
+        ## transform
+        if self.transform is not None:
+            img = self.transform(img)
+        return img, label
+
+
+
+
+crop_size=224
+val_size=256
+# Data loading code
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                    std=[0.229, 0.224, 0.225])
+train_source_dataset = NormalDataset(
+    args.train_source_root,
+    args.train_source_source,
+    transform = transforms.Compose([
+        transforms.RandomResizedCrop(crop_size),
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465),
-                             (0.2023, 0.1994, 0.2010)),
-    ])
-else:
-    transform_train = transforms.Compose([
+        normalize,
+    ]), args=args )
+
+train_target_dataset = NormalDataset(
+    args.train_target_root,
+    args.train_target_source,
+    transform = transforms.Compose([
+    transforms.RandomResizedCrop(crop_size),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465),
-                             (0.2023, 0.1994, 0.2010)),
-    ])
+        normalize,
+    ]), args=args)
+
+val_dataset = NormalDataset(
+    args.val_root,
+    args.val_source,
+    transform = transforms.Compose([
+        transforms.Resize(val_size),
+        transforms.CenterCrop(crop_size),
+        transforms.ToTensor(),
+        normalize,
+    ]),is_train=False, args=args )
+
+source_val_dataset = NormalDataset(
+    args.source_val_root,
+    args.source_val_source,
+    transform = transforms.Compose([
+        transforms.Resize(val_size),
+        transforms.CenterCrop(crop_size),
+        transforms.ToTensor(),
+        normalize,
+    ]),is_train=False, args=args )
 
 
-transform_test = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
+trainloader = DataLoader(
+    train_source_dataset, batch_size=args.batch_size, shuffle=True,
+    num_workers=4)
 
-if args.dataset == 'CIFAR10':
-    trainset = datasets.CIFAR10(root='~/data', train=True, download=True,
-                            transform=transform_train)
-    num_classes=10
-elif args.dataset == 'CIFAR100':
-    trainset = datasets.CIFAR100(root='~/data', train=True, download=True,
-                            transform=transform_train)
-    num_classes=100
-trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=args.batch_size,
-                                          shuffle=True, num_workers=8)
+train_target_loader = DataLoader(
+    train_target_dataset, batch_size=args.batch_size, shuffle=True,
+    num_workers=4)
 
-if args.dataset == 'CIFAR10':
-    testset = datasets.CIFAR10(root='~/data', train=False, download=False,
-                           transform=transform_test)
-elif args.dataset == 'CIFAR100':
-    testset = datasets.CIFAR100(root='~/data', train=False, download=True,
-                            transform=transform_test)
+val_loader = DataLoader(
+    val_dataset, batch_size=args.batch_size, shuffle=False,
+    num_workers=4)
 
-testloader = torch.utils.data.DataLoader(testset, batch_size=100,
-                                         shuffle=False, num_workers=8)
+source_val_loader = DataLoader(
+    source_val_dataset, batch_size=args.batch_size, shuffle=False,
+    num_workers=4)
+
 
 
 # Model
@@ -145,8 +202,8 @@ if args.resume:
     start_epoch = checkpoint['epoch'] + 1
 else:
     logger.info('==> Building model..')
-    net = models.__dict__[args.model](num_classes=num_classes)
-
+    net = torchvision.models.__dict__[args.model](pretrained=True)
+net.classifier[-1] = nn.Linear(4096, args.num_classes)
 
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
@@ -162,7 +219,6 @@ if use_cuda:
 
 criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
-wandb.watch(net)
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
@@ -255,27 +311,24 @@ def train(epoch):
             tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
             experiment.log_metric("loss_step", train_loss.avg, curr_idx)
             experiment.log_metric("acc_step", acc.avg, curr_idx)
-            #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
-            #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
     experiment.log_metric("loss_epoch", train_loss_avg/len(trainloader), epoch)
-    wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
-    wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
 
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
 
-def test(epoch):
+def test(epoch, testloader, domain="source"):
     global best_acc
     net.eval()
     test_loss = AverageMeter(100)
     acc = AverageMeter(100)
     correct = 0
     total = 0
+    logger.info("epoch: {} domain: {}".format(epoch, domain))
     for batch_idx, (inputs, targets) in enumerate(testloader):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
@@ -287,7 +340,7 @@ def test(epoch):
             test_loss.update(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
-            correct_idx = predicted.eq(targets.data).sum().item()
+            correct_idx = predicted.eq(targets.data).cpu().sum()
             correct += correct_idx
 
             acc.update(100. * correct_idx / float(targets.size(0)))
@@ -300,16 +353,14 @@ def test(epoch):
         checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
-    tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
-    tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
-    tb_logger.add_scalar("test/test_loss_epoch", test_loss.avg, epoch)
-    tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
-    experiment.log_metric("loss_step", test_loss.avg, epoch * len(trainloader))
-    experiment.log_metric("acc_step", 100.*correct/total, epoch*len(trainloader))
-    experiment.log_metric("loss_epoch", test_loss.avg, epoch)
-    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
-    wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
-    wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
+    tb_logger.add_scalar("test/test_loss_{}".format(domain), test_loss.avg, epoch * len(trainloader))
+    tb_logger.add_scalar("test/test_acc_{}".format(domain), 100.*correct/total, epoch*len(trainloader))
+    tb_logger.add_scalar("test/test_loss_epoch_{}".format(domain), test_loss.avg, epoch)
+    tb_logger.add_scalar("test/test_acc_epoch_{}".format(domain), 100.*correct/total, epoch)
+    experiment.log_metric("loss_step_{}".format(domain), test_loss.avg, epoch * len(trainloader))
+    experiment.log_metric("acc_step_{}".format(domain), 100.*correct/total, epoch*len(trainloader))
+    experiment.log_metric("loss_epoch_{}".format(domain), test_loss.avg, epoch)
+    experiment.log_metric("acc_epoch_{}".format(domain), 100.*correct/total, epoch)
 
     return (test_loss.avg, 100.*correct/total)
 
@@ -372,7 +423,8 @@ for epoch in range(start_epoch, args.epoch):
     with experiment.train():
         train_loss, reg_loss, train_acc = train(epoch)
     with experiment.test():
-        test_loss, test_acc = test(epoch)
+        test_loss, test_acc = test(epoch, source_val_loader, domain="source")
+        test_loss, test_acc = test(epoch, val_loader, domain="target")
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
