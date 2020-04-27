@@ -94,7 +94,6 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 if args.seed != 0:
     torch.manual_seed(args.seed)
 
-args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
@@ -109,8 +108,10 @@ experiment.set_name(args.log_dir)
 
 experiment.add_tag('pytorch')
 experiment.log_parameters(args.__dict__)
+name = args.load_model
+name = name.replace("results/vgg", "")
 wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
-           name=args.log_dir,)
+           name=name)
 wandb.config.update(args)
 
 
@@ -236,7 +237,6 @@ if args.resume:
     checkpoint = torch.load(args.load_model)
 
     net.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optim'])
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch'] + 1
 
@@ -465,11 +465,47 @@ def test(epoch):
         best_acc = acc
     mean = []
     var = []
+    layer = 0
     for m in net.modules():
         if isinstance(m, Constraint_Norm):
+                layer += 1
                 mean_, var_ = m.get_mean_var()
                 mean.append(mean_.abs())
                 var.append(var_.abs())
+                wandb.log({"test/{:02d}_mean".format(layer): mean_.abs()}, step=epoch)
+                wandb.log({"test/{:02d}_var".format(layer): var_.abs()}, step=epoch)
+
+    layer = 0
+    norm_ = 0
+    for m in net.modules():
+        if isinstance(m, nn.Conv2d):
+            layer += 1
+            norm = (m.weight * m.weight).sum()
+            norm = torch.sqrt(norm).item()
+            norm_ += norm
+            wandb.log({"test/conv_{:02d}_weight_2_norm".format(layer):norm}, step=epoch)
+            norm = (m.bias * m.bias).sum()
+            norm = torch.sqrt(norm).item()
+            norm_ += norm
+
+            wandb.log({"test/conv_{:02d}_bias_2_norm".format(layer):norm}, step=epoch)
+        if isinstance(m, nn.Linear):
+            layer += 1
+            norm = (m.weight * m.weight).sum()
+            norm = torch.sqrt(norm).item()
+            norm_ += norm
+
+            wandb.log({"test/fc_{:02d}_weight_2_norm".format(layer):norm}, step=epoch)
+            norm = (m.bias * m.bias).sum()
+            norm = torch.sqrt(norm).item()
+            norm_ += norm
+
+            wandb.log({"test/fc_{:02d}_bias_2_norm".format(layer):norm}, step=epoch)
+
+    wandb.log({"test/param_2_norm":norm_}, step=epoch)
+
+
+
     mean = torch.mean(torch.stack(mean))
     var = torch.mean(torch.stack(var))
 
@@ -593,29 +629,4 @@ lr_scheduler.step(start_epoch)
 lr = optimizer.param_groups[0]['lr']
 logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
-
-for epoch in range(start_epoch, args.epoch):
-    lr = optimizer.param_groups[0]['lr']
-    lr1 = optimizer.param_groups[1]['lr']
-    logger.info("begin: epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
-
-    if epoch == args.decay_constraint:
-        args.lambda_constraint_weight = 0
-    with experiment.train():
-        train_loss, reg_loss, train_acc = train(epoch)
-    with experiment.test():
-        test_loss, test_acc = test(epoch)
-    if args.lr_ReduceLROnPlateau == True:
-        lr_scheduler.step(test_loss)
-    else:
-        lr_scheduler.step()
-    lr = optimizer.param_groups[0]['lr']
-    lr1 = optimizer.param_groups[1]['lr']
-    logger.info("epoch: {}, lr: {} lag lr: {}".format(epoch, lr, lr1))
-    if ((epoch+1) % 10) == 0:
-        save_checkpoint(test_acc, epoch)
-
-    with open(logname, 'a') as logfile:
-        logwriter = csv.writer(logfile, delimiter=',')
-        logwriter.writerow([epoch, train_loss, reg_loss, train_acc, test_loss,
-                            test_acc])
+test_loss, test_acc = test(199)
