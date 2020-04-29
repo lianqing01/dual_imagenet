@@ -28,6 +28,10 @@ from utils import progress_bar, AverageMeter
 from utils import create_logger
 import wandb
 from models.constraint_bn_v2 import *
+try:
+    import torch_xla.core.xla_model as xm
+except:
+    pass
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -168,10 +172,13 @@ logger.info('==> Building model..')
 net = models.__dict__[args.model](num_classes=args.num_classes)
 if use_cuda:
     net.cuda()
-    net = torch.nn.DataParallel(net)
+    #net = torch.nn.DataParallel(net)
     logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
     logger.info('Using CUDA..')
+except:
+    device = xm.xla_device()
+    net = net.to(device)
 
 constraint_param = []
 for m in net.modules():
@@ -283,6 +290,9 @@ def train(epoch):
         start = time.time()
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
+        else:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
         bsz = inputs.size(0)
 
 
@@ -327,7 +337,10 @@ def train(epoch):
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        optimizer.step()
+        if use_cuda:
+            optimizer.step()
+        else:
+            xm.optimizer_step(optimizer, barrier=True)
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
         remain_time = remain_iter * batch_time.avg
@@ -441,6 +454,10 @@ def test(epoch):
     for batch_idx, (inputs, targets) in enumerate(testloader):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
+        else:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+
         with torch.no_grad():
             inputs, targets = Variable(inputs), Variable(targets)
             bsz = inputs.size(0)
@@ -589,9 +606,10 @@ if args.initialize_by_pretrain == True:
             break
 
 
-lr_scheduler.step(start_epoch)
-lr = optimizer.param_groups[0]['lr']
-logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
+if torch.__version__ < '1.4.1':
+    lr_scheduler.step(start_epoch)
+    lr = optimizer.param_groups[0]['lr']
+    logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
 
 for epoch in range(start_epoch, args.epoch):

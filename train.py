@@ -12,6 +12,10 @@ import os.path as osp
 import time
 import csv
 import os
+try:
+    import torch_xla.core.xla_model as xm
+except:
+    pass
 
 import numpy as np
 import torch
@@ -73,17 +77,8 @@ args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).re
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
-experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
-                        project_name="constraint_bn", workspace="lianqing11",
-                        auto_output_logging=False,
-                        log_env_gpu=False,
-                        log_env_cpu=False,
-                        log_env_host=False)
-experiment.set_name(args.log_dir)
 
 
-experiment.add_tag('pytorch')
-experiment.log_parameters(args.__dict__)
 wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
@@ -121,7 +116,7 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
-                                          shuffle=True, num_workers=8)
+                                          shuffle=True, num_workers=4)
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=False,
@@ -131,7 +126,7 @@ elif args.dataset == 'CIFAR100':
                             transform=transform_test)
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
-                                         shuffle=False, num_workers=8)
+                                         shuffle=False, num_workers=4)
 
 
 # Model
@@ -155,14 +150,18 @@ tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
 
 if use_cuda:
     net.cuda()
-    net = torch.nn.DataParallel(net)
+    #net = torch.nn.DataParallel(net)
     logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
     logger.info('Using CUDA..')
+else:
+    device = xm.xla_device(2)
+    net = net.to(device)
+    logger.info("xla")
 
 criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
-wandb.watch(net)
+#wandb.watch(net)
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
@@ -212,6 +211,10 @@ def train(epoch):
         start = time.time()
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
+        else:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+
 
         outputs = net(inputs)
         loss = criterion(outputs, targets)
@@ -226,7 +229,11 @@ def train(epoch):
         optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        optimizer.step()
+        if use_cuda:
+            optimizer.step()
+        else:
+            xm.optimizer_step(optimizer, barrier=True)
+
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
         remain_time = remain_iter * batch_time.avg
@@ -253,15 +260,13 @@ def train(epoch):
             curr_idx = epoch * len(trainloader) + batch_idx
             tb_logger.add_scalar("train/train_loss", train_loss.avg, curr_idx)
             tb_logger.add_scalar("train/train_acc", acc.avg, curr_idx)
-            experiment.log_metric("loss_step", train_loss.avg, curr_idx)
-            experiment.log_metric("acc_step", acc.avg, curr_idx)
+            #experiment.log_metric("loss_step", train_loss.avg, curr_idx)
+            #experiment.log_metric("acc_step", acc.avg, curr_idx)
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
-    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
-    experiment.log_metric("loss_epoch", train_loss_avg/len(trainloader), epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
 
@@ -279,6 +284,11 @@ def test(epoch):
     for batch_idx, (inputs, targets) in enumerate(testloader):
         if use_cuda:
             inputs, targets = inputs.cuda(), targets.cuda()
+        else:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+
+
         with torch.no_grad():
             inputs, targets = Variable(inputs), Variable(targets)
             outputs = net(inputs)
@@ -304,10 +314,6 @@ def test(epoch):
     tb_logger.add_scalar("test/test_acc", 100.*correct/total, epoch*len(trainloader))
     tb_logger.add_scalar("test/test_loss_epoch", test_loss.avg, epoch)
     tb_logger.add_scalar("test/test_acc_epoch", 100.*correct/total, epoch)
-    experiment.log_metric("loss_step", test_loss.avg, epoch * len(trainloader))
-    experiment.log_metric("acc_step", 100.*correct/total, epoch*len(trainloader))
-    experiment.log_metric("loss_epoch", test_loss.avg, epoch)
-    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
     wandb.log({"test/loss_epoch": test_loss.avg}, step=epoch)
     wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
 
@@ -358,9 +364,10 @@ else:
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones = args.schedule)
 
-lr_scheduler.step(start_epoch)
-lr = optimizer.param_groups[0]['lr']
-logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
+if torch.__version__ < '1.4.1':
+    lr_scheduler.step(start_epoch)
+    lr = optimizer.param_groups[0]['lr']
+    logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
 if not os.path.exists(logname):
     with open(logname, 'w') as logfile:
@@ -369,10 +376,8 @@ if not os.path.exists(logname):
                             'test loss', 'test acc'])
 
 for epoch in range(start_epoch, args.epoch):
-    with experiment.train():
-        train_loss, reg_loss, train_acc = train(epoch)
-    with experiment.test():
-        test_loss, test_acc = test(epoch)
+    train_loss, reg_loss, train_acc = train(epoch)
+    test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
