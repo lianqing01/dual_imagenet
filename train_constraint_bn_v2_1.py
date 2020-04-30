@@ -102,24 +102,10 @@ args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).re
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
-experiment = Experiment(api_key="1v0Sm8eioBxd9w0fhZq1FwE0g",
-                        project_name="constraint_bn", workspace="lianqing11",
-                        auto_output_logging=False,
-                        log_env_gpu=False,
-                        log_env_cpu=False,
-                        log_env_host=False)
-experiment.set_name(args.log_dir)
-
-
-experiment.add_tag('pytorch')
-experiment.log_parameters(args.__dict__)
 wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
-
-experiment.add_tag('pytorch')
-experiment.log_parameters(args.__dict__)
 #
 # Data
 logger.info('==> Preparing data..')
@@ -154,7 +140,7 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
-                                          shuffle=True, num_workers=8)
+                                          shuffle=True, num_workers=2)
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=True,
@@ -164,7 +150,7 @@ elif args.dataset == 'CIFAR100':
                             transform=transform_test)
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
-                                         shuffle=False, num_workers=8)
+                                         shuffle=False, num_workers=2)
 
 
 
@@ -176,7 +162,7 @@ if use_cuda:
     logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
     logger.info('Using CUDA..')
-except:
+else:
     device = xm.xla_device()
     net = net.to(device)
 
@@ -396,15 +382,6 @@ def train(epoch):
             tb_logger.add_scalar("train/constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_loss_var", -1 * weight_var.item(), curr_idx)
 
-            experiment.log_metric("loss_step", train_loss.avg, curr_idx)
-            experiment.log_metric("acc_step", acc.avg, curr_idx)
-            experiment.log_metric("norm_mean(abs)", mean.item(), curr_idx)
-            experiment.log_metric("norm_var-1(abs)", var.item(), curr_idx)
-            experiment.log_metric("weight_mean(abs)", weight_mean_abs.item(), curr_idx)
-            experiment.log_metric("weight_var-1(abs)", weight_var_abs.item(), curr_idx)
-            experiment.log_metric("constraint_loss_mean", -1 * weight_mean.item(), curr_idx)
-            experiment.log_metric("constraint_loss_var", -1 * weight_var.item(), curr_idx)
-
             # get the constraint weight
             lambda_ = []
             xi_ = []
@@ -417,14 +394,9 @@ def train(epoch):
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_xi_", xi_.item(), curr_idx)
 
-            experiment.log_metric("constraint_lambda_", lambda_.item(), curr_idx)
-            experiment.log_metric("constraint_xi_", xi_.item(), curr_idx)
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
-
-    experiment.log_metric("loss_epoch", train_loss_avg / len(trainloader), epoch)
-    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
     wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
@@ -433,7 +405,6 @@ def train(epoch):
     wandb.log({"train/weight_var-1(abs)": weight_var_abs.item()}, step=epoch)
     wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
     wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
-
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
 
     for m in net.modules():
@@ -476,8 +447,6 @@ def test(epoch):
                      % (test_loss/(batch_idx+1), 100.*correct/total,
                         correct, total))
     acc = 100.*correct/total
-    if epoch == start_epoch + args.epoch - 1 or acc > best_acc:
-        checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
     mean = []
@@ -502,16 +471,6 @@ def test(epoch):
     tb_logger.add_scalar("test/norm_mean(abs)_epoch", mean, epoch)
     tb_logger.add_scalar("test/norm_var-1(abs)_epoch", var, epoch)
 
-    experiment.log_metric("loss_step", test_loss/batch_idx, curr_idx)
-    experiment.log_metric("acc_step", 100.*correct/total, curr_idx)
-    experiment.log_metric("loss_epoch", test_loss/batch_idx, epoch)
-    experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
-
-    experiment.log_metric("norm_mean(abs)", mean.item(), curr_idx)
-    experiment.log_metric("norm_var-1(abs)", var.item(), curr_idx)
-
-    experiment.log_metric("norm_mean(abs)_epoch", mean.item(), epoch)
-    experiment.log_metric("norm_var-1(abs)_epoch", var.item(), epoch)
 
 
     lambda_ = []
@@ -524,14 +483,11 @@ def test(epoch):
     xi_ = torch.mean(torch.stack(xi_))
     tb_logger.add_scalar("test/constraint_lambda_", lambda_.item(), curr_idx)
     tb_logger.add_scalar("test/constraint_xi_", xi_.item(), curr_idx)
-    experiment.log_metric("test/constraint_lambda_", lambda_.item(), curr_idx)
-    experiment.log_metric("test/constraint_xi_", xi_.item(), curr_idx)
     wandb.log({"test/loss_epoch": test_loss/batch_idx}, step=epoch)
     wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
 
     wandb.log({"test/norm_mean(abs)_epoch":mean.item()}, step=epoch)
     wandb.log({"test/norm_var-1(abs)_epoch":var.item()}, step=epoch)
-
 
 
 
@@ -619,10 +575,8 @@ for epoch in range(start_epoch, args.epoch):
 
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
-    with experiment.train():
-        train_loss, reg_loss, train_acc = train(epoch)
-    with experiment.test():
-        test_loss, test_acc = test(epoch)
+    train_loss, reg_loss, train_acc = train(epoch)
+    test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
@@ -633,7 +587,3 @@ for epoch in range(start_epoch, args.epoch):
     if ((epoch+1) % 10) == 0:
         save_checkpoint(test_acc, epoch)
 
-    with open(logname, 'a') as logfile:
-        logwriter = csv.writer(logfile, delimiter=',')
-        logwriter.writerow([epoch, train_loss, reg_loss, train_acc, test_loss,
-                            test_acc])

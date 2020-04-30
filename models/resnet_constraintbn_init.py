@@ -5,9 +5,9 @@ from torchvision.models.utils import load_state_dict_from_url
 
 
 from .constraint_bn_v2 import *
-__all__ = ['resnet_constraint18', 'resnet_constraint34', 'resnet_constraint50', 'resnet_constraint101',
-           'resnet_constraint152', 'resnext50_32x4d', 'resnext101_32x8d',
-           'wide_resnet_constraint50_2', 'wide_resnet_constraint101_2']
+__all__ = ['resnet_constraint_init18', 'resnet_constraint_init34', 'resnet_constraint_init50', 'resnet_constraint_init101',
+           'resnet_constraint_init152', 'resnext50_32x4d', 'resnext101_32x8d',
+           'wide_resnet_constraint_init50_2', 'wide_resnet_constraint_init101_2']
 
 
 model_urls = {
@@ -96,6 +96,8 @@ class Bottleneck(nn.Module):
         self.bn2 = norm_layer(width, pre_affine=True, post_affine=True)
         self.conv3 = conv1x1(width, planes * self.expansion)
         self.bn3 = norm_layer(planes * self.expansion, pre_affine=True, post_affine=True)
+        self.scalar = nn.Parameter(torch.Tensor(planes*self.expansion).view(1,-1,1,1))
+        self.scalar.data.fill_(0)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -112,6 +114,7 @@ class Bottleneck(nn.Module):
 
         out = self.bn2(out)
         out = self.conv3(out)
+        out = out * self.scalar
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -223,7 +226,7 @@ def _resnet(arch, block, layers, pretrained, progress, **kwargs):
     return model
 
 
-def resnet_constraint18(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_init18(pretrained=False, progress=True, **kwargs):
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -235,7 +238,7 @@ def resnet_constraint18(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_constraint34(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_init34(pretrained=False, progress=True, **kwargs):
     r"""ResNet-34 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -247,7 +250,7 @@ def resnet_constraint34(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_constraint50(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_init50(pretrained=False, progress=True, **kwargs):
     r"""ResNet-50 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -259,7 +262,7 @@ def resnet_constraint50(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_constraint101(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_init101(pretrained=False, progress=True, **kwargs):
     r"""ResNet-101 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -271,7 +274,7 @@ def resnet_constraint101(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_constraint152(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_init152(pretrained=False, progress=True, **kwargs):
     r"""ResNet-152 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -311,7 +314,7 @@ def resnext101_32x8d(pretrained=False, progress=True, **kwargs):
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet_constraint50_2(pretrained=False, progress=True, **kwargs):
+def wide_resnet_constraint_init50_2(pretrained=False, progress=True, **kwargs):
     r"""Wide ResNet-50-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
@@ -329,7 +332,7 @@ def wide_resnet_constraint50_2(pretrained=False, progress=True, **kwargs):
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet_constraint101_2(pretrained=False, progress=True, **kwargs):
+def wide_resnet_constraint_init101_2(pretrained=False, progress=True, **kwargs):
     r"""Wide ResNet-101-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
