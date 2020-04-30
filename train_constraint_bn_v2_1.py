@@ -154,7 +154,7 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
-                                          shuffle=True, num_workers=8)
+                                          shuffle=True, num_workers=2)
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=True,
@@ -164,7 +164,7 @@ elif args.dataset == 'CIFAR100':
                             transform=transform_test)
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
-                                         shuffle=False, num_workers=8)
+                                         shuffle=False, num_workers=2)
 
 
 
@@ -176,7 +176,7 @@ if use_cuda:
     logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
     logger.info('Using CUDA..')
-except:
+else:
     device = xm.xla_device()
     net = net.to(device)
 

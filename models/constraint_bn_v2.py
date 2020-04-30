@@ -70,11 +70,11 @@ class Constraint_Norm(nn.Module):
         if self.pre_affine:
             if self.update_affine_only:
                 x_ = x.detach() - self.mu_
-                mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+                mean = self.lagrangian.get_weighted_mean(x_, self.norm_dim)
                 x = x - self.mu_.detach()
             else:
                 x = x - self.mu_
-            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+                mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         else:
             mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         try:

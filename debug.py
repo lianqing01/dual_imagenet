@@ -26,7 +26,6 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
-import wandb
 from models.constraint_bn_v2 import *
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
@@ -110,9 +109,6 @@ experiment.add_tag('pytorch')
 experiment.log_parameters(args.__dict__)
 name = args.load_model
 name = name.replace("results/vgg", "")
-wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
-           name=name)
-wandb.config.update(args)
 
 
 experiment.add_tag('pytorch')
@@ -290,6 +286,7 @@ def train(epoch):
         if args.optim_loss == 'mse':
             targets = targets.float()
         loss = criterion(outputs, targets)
+        print(outputs.max(1)[0].mean())
 
 
         # constraint loss
@@ -412,15 +409,6 @@ def train(epoch):
 
     experiment.log_metric("loss_epoch", train_loss_avg / len(trainloader), epoch)
     experiment.log_metric("acc_epoch", 100.*correct/total, epoch)
-    wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
-    wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
-    wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
-    wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
-    wandb.log({"train/weight_mean(abs)": weight_mean_abs.item()},step=epoch)
-    wandb.log({"train/weight_var-1(abs)": weight_var_abs.item()}, step=epoch)
-    wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
-    wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
-
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
 
     for m in net.modules():
@@ -445,6 +433,7 @@ def test(epoch):
             inputs, targets = Variable(inputs), Variable(targets)
             bsz = inputs.size(0)
             outputs = net(inputs)
+            print(outputs.max(1)[1].mean())
             if args.optim_loss == 'mse':
                 targets = targets.float()
             loss = criterion(outputs, targets)
@@ -472,40 +461,30 @@ def test(epoch):
                 mean_, var_ = m.get_mean_var()
                 mean.append(mean_.abs())
                 var.append(var_.abs())
-                wandb.log({"test/{:02d}_mean".format(layer): mean_.abs()}, step=epoch)
-                wandb.log({"test/{:02d}_var".format(layer): var_.abs()}, step=epoch)
 
     layer = 0
     norm_ = 0
-    norm_time = 1
     for m in net.modules():
         if isinstance(m, nn.Conv2d):
             layer += 1
             norm = (m.weight * m.weight).sum()
             norm = torch.sqrt(norm).item()
             norm_ += norm
-            norm_time *= norm
-            wandb.log({"test/conv_{:02d}_weight_2_norm".format(layer):norm}, step=epoch)
-            wandb.log({"test/conv_{:02d}_time_weight_2_norm".format(layer):norm_time}, step=epoch)
             norm = (m.bias * m.bias).sum()
             norm = torch.sqrt(norm).item()
             norm_ += norm
 
-            wandb.log({"test/conv_{:02d}_bias_2_norm".format(layer):norm}, step=epoch)
         if isinstance(m, nn.Linear):
             layer += 1
             norm = (m.weight * m.weight).sum()
             norm = torch.sqrt(norm).item()
             norm_ += norm
 
-            wandb.log({"test/fc_{:02d}_weight_2_norm".format(layer):norm}, step=epoch)
             norm = (m.bias * m.bias).sum()
             norm = torch.sqrt(norm).item()
             norm_ += norm
 
-            wandb.log({"test/fc_{:02d}_bias_2_norm".format(layer):norm}, step=epoch)
 
-    wandb.log({"test/param_2_norm":norm_}, step=epoch)
 
 
 
@@ -548,11 +527,6 @@ def test(epoch):
     tb_logger.add_scalar("test/constraint_xi_", xi_.item(), curr_idx)
     experiment.log_metric("test/constraint_lambda_", lambda_.item(), curr_idx)
     experiment.log_metric("test/constraint_xi_", xi_.item(), curr_idx)
-    wandb.log({"test/loss_epoch": test_loss/batch_idx}, step=epoch)
-    wandb.log({"test/acc_epoch": 100.*correct/total}, step=epoch)
-
-    wandb.log({"test/norm_mean(abs)_epoch":mean.item()}, step=epoch)
-    wandb.log({"test/norm_var-1(abs)_epoch":var.item()}, step=epoch)
 
 
 
@@ -631,5 +605,5 @@ if args.initialize_by_pretrain == True:
 lr_scheduler.step(start_epoch)
 lr = optimizer.param_groups[0]['lr']
 logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
-
+train(199)
 test_loss, test_acc = test(199)

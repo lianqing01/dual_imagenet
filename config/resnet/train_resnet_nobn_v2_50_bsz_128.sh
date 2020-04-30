@@ -1,4 +1,4 @@
-python train_constraint_bn_v2_1.py --model resnet_nobnv2_50 \
+python train_constraint_bn_v2_1.py --model resnet_nobn101 \
     --log_dir resnet/oracle_resnet_nobnv2_50_bsz_128_exp001 \
     --lr 0.1 \
     --batch-size 128 \
