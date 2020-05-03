@@ -216,7 +216,17 @@ def train(epoch):
             targets = targets.to(device)
 
 
+        with torch.no_grad():
+            outputs = net(inputs)
+        del outputs
+        for m in net.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.eval()
         outputs = net(inputs)
+        for m in net.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.train()
+
         loss = criterion(outputs, targets)
         train_loss.update(loss.data.item())
         _, predicted = torch.max(outputs.data, 1)
@@ -306,6 +316,8 @@ def test(epoch):
                      % (test_loss.avg, acc.avg,
                         correct, total))
     acc = 100.*correct/total
+    if epoch == start_epoch + args.epoch - 1 or acc > best_acc:
+        checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
     tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
@@ -317,6 +329,20 @@ def test(epoch):
 
     return (test_loss.avg, 100.*correct/total)
 
+
+def checkpoint(acc, epoch):
+    # Save checkpoint.
+    logger.info('Saving..')
+    state = {
+        'net': net,
+        'acc': acc,
+        'epoch': epoch,
+        'rng_state': torch.get_rng_state()
+    }
+    if not os.path.isdir('checkpoint'):
+        os.makedirs('checkpoint')
+    torch.save(state, './checkpoint/ckpt.t7' + args.name + '_'
+               + str(args.seed))
 
 
 def save_checkpoint(acc, epoch):

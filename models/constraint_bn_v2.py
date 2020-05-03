@@ -67,6 +67,8 @@ class Constraint_Norm(nn.Module):
     def forward(self, x):
 
         # mean
+        self.pre_mean = x.mean(self.norm_dim)
+        self.pre_var = (x*x).mean(self.norm_dim)
         if self.pre_affine:
             if self.update_affine_only:
                 x_ = x.detach() - self.mu_

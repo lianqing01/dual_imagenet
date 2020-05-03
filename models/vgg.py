@@ -6,6 +6,7 @@ from torch.autograd import Variable
 from .dual_norm import DualNorm
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
+from batchrenorm import BatchRenorm2d
 
 
 cfg = {
@@ -50,7 +51,7 @@ class VGG(nn.Module):
             if x == 'M':
                 layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
             else:
-                if with_bn == 'dual':
+                if with_bn == 'dual': # deprecated
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                DualNorm(x),
                                nn.ReLU(inplace=True),
@@ -59,6 +60,11 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
+                elif with_bn == 'brn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               BatchRenorm2d(x),
+                               nn.ReLU(inplace=True)]
+
                 elif with_bn == 'constraint_bn_v2':
                     if idx == 0:
                         layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
@@ -91,6 +97,9 @@ def vgg16(num_classes=10):
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
+def vgg16_brn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='brn')
+
 
 def vgg16_dual_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='dual')

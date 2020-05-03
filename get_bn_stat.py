@@ -10,6 +10,7 @@ from comet_ml import Experiment
 import argparse
 import os.path as osp
 import time
+from models.batchnorm import BatchNorm2d
 import csv
 import os
 try:
@@ -129,39 +130,10 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=4)
 
 
+logger.info('==> Building model..')
+net = nn.DataParallel(models.__dict__[args.model](num_classes=num_classes))
 # Model
-if args.resume:
-    # Load checkpoint.
-    logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load(args.load_model)
-    net = checkpoint['net']
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
-else:
-    logger.info('==> Building model..')
-    net = models.__dict__[args.model](num_classes=num_classes)
 
-
-logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
-           + str(args.seed) + '.csv')
-
-tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
-
-if use_cuda:
-    net.cuda()
-    #net = torch.nn.DataParallel(net)
-    logger.info(torch.cuda.device_count())
-    cudnn.benchmark = True
-    logger.info('Using CUDA..')
-else:
-    device = xm.xla_device(2)
-    net = net.to(device)
-    logger.info("xla")
-
-criterion = nn.CrossEntropyLoss()
-logger.info(args.lr)
-#wandb.watch(net)
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
@@ -192,6 +164,38 @@ if args.decrease_affine:
                       lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
 
+if args.resume:
+    # Load checkpoint.
+    logger.info('==> Resuming from checkpoint..')
+    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+
+    checkpoint = torch.load(args.load_model)
+    net.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optim'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+
+
+
+logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
+           + str(args.seed) + '.csv')
+
+tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
+
+if use_cuda:
+    net.cuda()
+    #net = torch.nn.DataParallel(net)
+    logger.info(torch.cuda.device_count())
+    cudnn.benchmark = True
+    logger.info('Using CUDA..')
+else:
+    device = xm.xla_device(2)
+    net = net.to(device)
+    logger.info("xla")
+
+criterion = nn.CrossEntropyLoss()
+logger.info(args.lr)
+#wandb.watch(net)
 
 
 
@@ -240,6 +244,39 @@ def train(epoch):
         t_m, t_s = divmod(remain_time, 60)
         t_h, t_m = divmod(t_m, 60)
         remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+
+
+        # get norm stat
+        layer = 0
+        mean_sum = 0
+        var_sum = 0
+        curr_idx = epoch * len(trainloader) + batch_idx
+        for m in net.modules():
+            if isinstance(m, BatchNorm2d):
+                layer += 1
+                mean = m.mean.abs().mean().item()
+                var = m.var.abs().mean().item()
+                mean_sum += mean
+                var_sum += var
+                tb_logger.add_scalar("batch/{:02d}_mean".format(layer), mean, curr_idx)
+                tb_logger.add_scalar("batch/{:02d}_var".format(layer), var, curr_idx)
+                wandb.log({"batch/{:02d}_mean".format(layer): mean,
+                           "batch_step": curr_idx}, step=epoch)
+                wandb.log({"batch/{:02d}_var".format(layer): var,
+                           "batch_step": curr_idx}, step=epoch)
+
+        tb_logger.add_scalar("batch/mean", mean_sum/float(layer), curr_idx)
+        tb_logger.add_scalar("batch/var", var_sum/float(layer), curr_idx)
+
+        wandb.log({"batch/mean".format(layer): mean_sum/float(layer),
+                   "batch_step": curr_idx}, step=epoch)
+        wandb.log({"batch/var".format(layer): var_sum/float(layer),
+                   "batch_step": curr_idx}, step=epoch)
+
+
+
+
+
 
 
         if (batch_idx+1) % args.print_freq == 0:
@@ -306,6 +343,8 @@ def test(epoch):
                      % (test_loss.avg, acc.avg,
                         correct, total))
     acc = 100.*correct/total
+    if epoch == start_epoch + args.epoch - 1 or acc > best_acc:
+        checkpoint(acc, epoch)
     if acc > best_acc:
         best_acc = acc
     tb_logger.add_scalar("test/test_loss", test_loss.avg, epoch * len(trainloader))
@@ -317,6 +356,20 @@ def test(epoch):
 
     return (test_loss.avg, 100.*correct/total)
 
+
+def checkpoint(acc, epoch):
+    # Save checkpoint.
+    logger.info('Saving..')
+    state = {
+        'net': net,
+        'acc': acc,
+        'epoch': epoch,
+        'rng_state': torch.get_rng_state()
+    }
+    if not os.path.isdir('checkpoint'):
+        os.makedirs('checkpoint')
+    torch.save(state, './checkpoint/ckpt.t7' + args.name + '_'
+               + str(args.seed))
 
 
 def save_checkpoint(acc, epoch):
