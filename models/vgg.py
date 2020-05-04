@@ -60,9 +60,13 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
-                elif with_bn == 'bn_moving_average':
+                elif with_bn == 'bn_population':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x, momentum=0.9),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'bn_moving_average':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
 
                 elif with_bn == 'brn':
@@ -104,6 +108,9 @@ def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
 def vgg16_bn_moving_average(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
+def vgg16_bn_population(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn_population')
+
 
 def vgg16_brn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='brn')
