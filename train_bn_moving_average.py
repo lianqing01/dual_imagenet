@@ -263,7 +263,7 @@ def train(epoch):
             xm.optimizer_step(optimizer, barrier=True)
 
         for m in net.modules():
-            if isinstance(m, BatchNorm2d):
+            if isinstance(m, BatchNorm2d) or isinstance(m, nn.BatchNorm2d):
                 m.train()
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
