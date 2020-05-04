@@ -215,6 +215,9 @@ def train(epoch):
             inputs = inputs.to(device)
             targets = targets.to(device)
 
+        for m in net.modules():
+            if isinstance(m, nn.BatchNorm2d):
+                m.train()
 
         with torch.no_grad():
             outputs = net(inputs)
@@ -223,9 +226,6 @@ def train(epoch):
             if isinstance(m, nn.BatchNorm2d):
                 m.eval()
         outputs = net(inputs)
-        for m in net.modules():
-            if isinstance(m, nn.BatchNorm2d):
-                m.train()
 
         loss = criterion(outputs, targets)
         train_loss.update(loss.data.item())
