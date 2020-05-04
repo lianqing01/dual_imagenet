@@ -7,6 +7,7 @@ from .dual_norm import DualNorm
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
 from batchrenorm import BatchRenorm2d
+from .batchnorm import BatchNorm2d
 
 
 cfg = {
@@ -62,7 +63,7 @@ class VGG(nn.Module):
                                nn.ReLU(inplace=True)]
                 elif with_bn == 'bn_population':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                               nn.BatchNorm2d(x, momentum=0.9),
+                               BatchNorm2d(x, momentum=1),
                                nn.ReLU(inplace=True)]
                 elif with_bn == 'bn_moving_average':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),

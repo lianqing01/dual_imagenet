@@ -85,26 +85,34 @@ class _BatchNorm(_NormBase):
         # exponential_average_factor is set to self.momentum
         # (when it is available) only so that it gets updated
         # in ONNX graph when this node is exported to ONNX.
-        if self.momentum is None:
-            exponential_average_factor = 0.0
+        if self.training:
+            if self.momentum is None:
+                exponential_average_factor = 0.0
+            else:
+                exponential_average_factor = self.momentum
+
+            if self.training and self.track_running_stats:
+                # TODO: if statement only here to tell the jit to skip emitting this when it is None
+                if self.num_batches_tracked is not None:
+                    self.num_batches_tracked = self.num_batches_tracked + 1
+                    if self.momentum is None:  # use cumulative moving average
+                        exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                    else:  # use exponential moving average
+                        exponential_average_factor = self.momentum
+
+            return F.batch_norm(
+                input, self.running_mean, self.running_var, self.weight, self.bias,
+                self.training or not self.track_running_stats,
+                exponential_average_factor, self.eps)
         else:
-            exponential_average_factor = self.momentum
+            input_shape = input.size()
+            input = input.view(input.size(0), self.num_features, -1)
+            output = (input - _unsqueeze_ft(self.running_mean)) * _unsqueeze_ft(torch.sqrt(1 / (self.running_var + self.eps)) * self.weight) \
+                + _unsqueeze_ft(self.bias)
+            return output.view(input_shape)
 
-        if self.training and self.track_running_stats:
-            # TODO: if statement only here to tell the jit to skip emitting this when it is None
-            if self.num_batches_tracked is not None:
-                self.num_batches_tracked = self.num_batches_tracked + 1
-                if self.momentum is None:  # use cumulative moving average
-                    exponential_average_factor = 1.0 / float(self.num_batches_tracked)
-                else:  # use exponential moving average
-                    exponential_average_factor = self.momentum
-
-        return F.batch_norm(
-            input, self.running_mean, self.running_var, self.weight, self.bias,
-            self.training or not self.track_running_stats,
-            exponential_average_factor, self.eps)
-
-
+def _unsqueeze_ft(tensor):
+    return tensor.unsqueeze(0).unsqueeze(-1)
 class BatchNorm1d(_BatchNorm):
     r"""Applies Batch Normalization over a 2D or 3D input (a mini-batch of 1D
     inputs with optional additional channel dimension) as described in the paper

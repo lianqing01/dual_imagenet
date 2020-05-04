@@ -30,6 +30,7 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
+from models.batchnorm import BatchNorm2d
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -121,7 +122,7 @@ trainloader = torch.utils.data.DataLoader(trainset,
 trainloader_po = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.po_batch_size,
                                           drop_last=True,
-                                          shuffle=True, num_workers=4)
+                                          shuffle=True, num_workers=16)
 
 
 if args.dataset == 'CIFAR10':
@@ -231,12 +232,13 @@ def train(epoch):
         with torch.no_grad():
             outputs_po = net(inputs_po)
         del outputs_po
+        del inputs_po
 
 
 
 
         for m in net.modules():
-            if isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, BatchNorm2d):
                 m.eval()
         outputs = net(inputs)
 
@@ -258,7 +260,7 @@ def train(epoch):
             xm.optimizer_step(optimizer, barrier=True)
 
         for m in net.modules():
-            if isinstance(m, nn.BatchNorm2d):
+            if isinstance(m, BatchNorm2d):
                 m.train()
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
