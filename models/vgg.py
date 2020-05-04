@@ -71,7 +71,7 @@ class VGG(nn.Module):
 
                 elif with_bn == 'brn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                               BatchRenorm2d(x),
+                               BatchRenorm2d(x, momentum=1),
                                nn.ReLU(inplace=True)]
 
                 elif with_bn == 'constraint_bn_v2':
