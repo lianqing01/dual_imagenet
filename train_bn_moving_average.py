@@ -55,6 +55,7 @@ parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
+parser.add_argument('--po_batch_size', default=1000, type=int)
 
 
 
@@ -117,6 +118,11 @@ elif args.dataset == 'CIFAR100':
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
                                           shuffle=True, num_workers=4)
+trainloader_po = torch.utils.data.DataLoader(trainset,
+                                          batch_size=args.po_batch_size,
+                                          drop_last=True,
+                                          shuffle=True, num_workers=4)
+
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=False,
@@ -206,6 +212,7 @@ def train(epoch):
     correct = 0
     total = 0
     acc = AverageMeter(100)
+    trainloader_po_iter = iter(trainloader_po)
     batch_time = AverageMeter()
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
@@ -214,18 +221,27 @@ def train(epoch):
         else:
             inputs = inputs.to(device)
             targets = targets.to(device)
-
-
+        # sample
+        try:
+            inputs_po, targets_po = trainloader_po_iter.__next__()
+        except:
+            trainloader_po_iter = iter(trainloader_po)
+            inputs_po, targets_po = trainloader_po_iter.__next__()
+        inputs_po = inputs_po.cuda()
         with torch.no_grad():
-            outputs = net(inputs)
-        del outputs
+            outputs_po = net(inputs_po)
+        del outputs_po
+
+
+
+
         for m in net.modules():
             if isinstance(m, nn.BatchNorm2d):
-                m.eval()
+                m.track_running_stats=False
         outputs = net(inputs)
         for m in net.modules():
             if isinstance(m, nn.BatchNorm2d):
-                m.train()
+                m.track_running_stats=True
 
         loss = criterion(outputs, targets)
         train_loss.update(loss.data.item())
