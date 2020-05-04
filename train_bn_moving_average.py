@@ -228,7 +228,10 @@ def train(epoch):
         except:
             trainloader_po_iter = iter(trainloader_po)
             inputs_po, targets_po = trainloader_po_iter.__next__()
-        inputs_po = inputs_po.cuda()
+        if use_cuda:
+            inputs_po = inputs_po.cuda()
+        else:
+            inputs_po = inputs_po.to(device)
         with torch.no_grad():
             outputs_po = net(inputs_po)
         del outputs_po
@@ -238,7 +241,7 @@ def train(epoch):
 
 
         for m in net.modules():
-            if isinstance(m, BatchNorm2d):
+            if isinstance(m, BatchNorm2d) or isinstance(m, nn.BatchNorm2d):
                 m.eval()
         outputs = net(inputs)
 
