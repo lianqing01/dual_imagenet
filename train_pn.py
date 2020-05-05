@@ -30,8 +30,6 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
-from models.batchnorm import BatchNorm2d
-from batchrenorm import BatchRenorm2d
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -43,6 +41,8 @@ parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
+parser.add_argument('--bn-batch-size', default=10000, type=int, help='batch size')
+
 parser.add_argument('--epoch', default=200, type=int,
                     help='total epochs to run')
 parser.add_argument('--no-augment', dest='augment', action='store_false',
@@ -57,7 +57,6 @@ parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
-parser.add_argument('--po_batch_size', default=1000, type=int)
 
 
 
@@ -118,13 +117,8 @@ elif args.dataset == 'CIFAR100':
                             transform=transform_train)
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
-                                          batch_size=args.batch_size,
+                                          bn_batch_size=args.bn_batch_size,
                                           shuffle=True, num_workers=4)
-trainloader_po = torch.utils.data.DataLoader(trainset,
-                                          batch_size=args.po_batch_size,
-                                          drop_last=True,
-                                          shuffle=True, num_workers=16)
-
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=False,
@@ -214,7 +208,6 @@ def train(epoch):
     correct = 0
     total = 0
     acc = AverageMeter(100)
-    trainloader_po_iter = iter(trainloader_po)
     batch_time = AverageMeter()
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
@@ -223,35 +216,14 @@ def train(epoch):
         else:
             inputs = inputs.to(device)
             targets = targets.to(device)
-        # sample
-        try:
-            inputs_po, targets_po = trainloader_po_iter.__next__()
-        except:
-            trainloader_po_iter = iter(trainloader_po)
-            inputs_po, targets_po = trainloader_po_iter.__next__()
-        if use_cuda:
-            inputs_po = inputs_po.cuda()
-        else:
-            inputs_po = inputs_po.to(device)
-        with torch.no_grad():
-            outputs_po = net(inputs_po)
-        del outputs_po
-        del inputs_po
 
 
-
-
-        for m in net.modules():
-            if isinstance(m, BatchNorm2d) or isinstance(m, nn.BatchNorm2d) \
-                    or isinstance(m, BatchRenorm2d):
-                m.track=False
         outputs = net(inputs)
-
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs[:args.batch_size], targets[:args.batch_size])
         train_loss.update(loss.data.item())
-        _, predicted = torch.max(outputs.data, 1)
+        _, predicted = torch.max(outputs[:args.batch_size].data, 1)
         total += targets.size(0)
-        correct_idx = predicted.eq(targets.data).cpu().sum().float()
+        correct_idx = predicted.eq(targets[:args.batch_size].data).cpu().sum().float()
         correct += correct_idx
         acc.update(100. * correct_idx / float(targets.size(0)))
         train_loss_avg += loss.item()
@@ -264,10 +236,6 @@ def train(epoch):
         else:
             xm.optimizer_step(optimizer, barrier=True)
 
-        for m in net.modules():
-            if isinstance(m, BatchNorm2d) or isinstance(m, nn.BatchNorm2d) \
-                    or isinstance(m, BatchRenorm2d):
-                m.track = True
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
         remain_time = remain_iter * batch_time.avg
@@ -351,20 +319,6 @@ def test(epoch):
 
     return (test_loss.avg, 100.*correct/total)
 
-
-def checkpoint(acc, epoch):
-    # Save checkpoint.
-    logger.info('Saving..')
-    state = {
-        'net': net,
-        'acc': acc,
-        'epoch': epoch,
-        'rng_state': torch.get_rng_state()
-    }
-    if not os.path.isdir('checkpoint'):
-        os.makedirs('checkpoint')
-    torch.save(state, './checkpoint/ckpt.t7' + args.name + '_'
-               + str(args.seed))
 
 
 def save_checkpoint(acc, epoch):

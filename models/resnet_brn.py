@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 
 from torchvision.models.utils import load_state_dict_from_url
-from batchrenorm import BatchRenorm2d
 
 __all__ = ['resnet_brn_50']
 
