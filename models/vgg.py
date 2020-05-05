@@ -7,7 +7,6 @@ from .dual_norm import DualNorm
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
 from .batchnorm import BatchNorm2d
-from batchrenorm import BatchRenorm2d
 
 
 cfg = {

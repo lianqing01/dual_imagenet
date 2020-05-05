@@ -41,7 +41,7 @@ parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--bn-batch-size', default=10000, type=int, help='batch size')
+parser.add_argument('--pn-batch-size', default=10000, type=int, help='batch size')
 
 parser.add_argument('--epoch', default=200, type=int,
                     help='total epochs to run')
@@ -117,8 +117,13 @@ elif args.dataset == 'CIFAR100':
                             transform=transform_train)
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
-                                          bn_batch_size=args.bn_batch_size,
-                                          shuffle=True, num_workers=4)
+                                          batch_size=args.batch_size,
+                                          shuffle=True, num_workers=8)
+pn_trainloader = torch.utils.data.DataLoader(trainset,
+                                          batch_size=args.pn_batch_size - args.batch_size,
+                                          drop_last=True,
+                                          shuffle=True, num_workers=8)
+
 
 if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=False,
@@ -209,6 +214,7 @@ def train(epoch):
     total = 0
     acc = AverageMeter(100)
     batch_time = AverageMeter()
+    pn_iter = iter(pn_trainloader)
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
         if use_cuda:
@@ -216,16 +222,30 @@ def train(epoch):
         else:
             inputs = inputs.to(device)
             targets = targets.to(device)
+        try:
+            inputs_pn, targets_pn = pn_iter.__next__()
+        except:
+            pn_iter = iter(pn_trainloader)
+            inputs_pn, targets_pn = pn_iter.__next__()
+        if use_cuda:
+            inputs_pn.cuda()
+            targets_pn.cuda()
+        else:
+            inputs_pn = inputs_pn.to(device)
+            targets_pn = targets_pn.to(device)
+        inputs = torch.cat([inputs, inputs_pn],dim=0)
+        targets = torch.cat([targets, targets_pn], dim=0)
+
 
 
         outputs = net(inputs)
         loss = criterion(outputs[:args.batch_size], targets[:args.batch_size])
         train_loss.update(loss.data.item())
         _, predicted = torch.max(outputs[:args.batch_size].data, 1)
-        total += targets.size(0)
+        total += args.batch_size
         correct_idx = predicted.eq(targets[:args.batch_size].data).cpu().sum().float()
         correct += correct_idx
-        acc.update(100. * correct_idx / float(targets.size(0)))
+        acc.update(100. * correct_idx / float(args.batch_size))
         train_loss_avg += loss.item()
 
         optimizer.zero_grad()
