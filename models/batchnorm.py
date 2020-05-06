@@ -111,6 +111,39 @@ class _BatchNorm(_NormBase):
                 + _unsqueeze_ft(self.bias)
             return output.view(input_shape)
 
+        if self.training:
+            if self.momentum is None:
+                exponential_average_factor = 0.0
+            else:
+                exponential_average_factor = self.momentum
+
+            if self.training and self.track_running_stats:
+                # TODO: if statement only here to tell the jit to skip emitting this when it is None
+                if self.num_batches_tracked is not None:
+                    self.num_batches_tracked = self.num_batches_tracked + 1
+                    if self.momentum is None:  # use cumulative moving average
+                        exponential_average_factor = 1.0 / float(self.num_batches_tracked)
+                    else:  # use exponential moving average
+                        exponential_average_factor = self.momentum
+                input_shape = input.size()
+                input = input.view(input.size(0), self.num_features, -1)
+                mean = input.mean([0, 2])
+                var = input.var([0, 2])
+                peak = (input - _unsqueeze_ft(mean)).pow(4).mean([0, 2])
+                self.running_mean = (1 - exponential_average_factor) * self.running_mean + exponential_average_factor * mean
+                self.running_var = (1 - exponential_average_factor) * self.running_var + exponential_average_factor * var
+                self.track_running_stats += 1
+                output = (input - _unsqueeze_ft(self.mean)) * _unsqueeze_ft(torch.sqrt(1 / (self.var + self.eps)) * self.weight) \
+                + _unsqueeze_ft(self.bias)
+                return output.view(input_shape)
+
+        else:
+            return F.batch_norm(
+                input, self.running_mean, self.running_var, self.weight, self.bias,
+                self.training or not self.track_running_stats,
+                exponential_average_factor, self.eps)
+
+
 def _unsqueeze_ft(tensor):
     return tensor.unsqueeze(0).unsqueeze(-1)
 class BatchNorm1d(_BatchNorm):
