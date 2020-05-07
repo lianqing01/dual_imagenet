@@ -32,6 +32,16 @@ from utils import progress_bar, AverageMeter
 from utils import create_logger
 from models.batchnorm import BatchNorm2d
 
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
@@ -54,12 +64,12 @@ parser.add_argument('--alpha', default=1., type=float,
 parser.add_argument('--log_dir', default="oracle_exp001")
 parser.add_argument('--grad_clip', default=3)
 # for lr scheduler
-parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
-parser.add_argument('--sample_noise', default=False, type=bool)
-parser.add_argument('--data_dependent', default=False, type=bool)
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--data_dependent', default=False, type=str2bool)
 parser.add_argument('--noise_bsz', default=128, type=int)
 parser.add_argument('--noise_std', default=0, type=float)
 
@@ -388,6 +398,7 @@ if not os.path.exists(logname):
 
 if use_cuda:
     device = torch.device("cuda")
+print(args.data_dependent)
 for m in net.modules():
     if isinstance(m, BatchNorm2d):
         m.sample_noise = args.sample_noise

@@ -118,7 +118,7 @@ class _BatchNorm(_NormBase):
                                 # for mean
                             noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
                             noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
-                        elif self.sample_noise and not self.data_dependent:
+                        elif self.sample_noise and self.data_dependent == False:
                             noise_mean = torch.normal(mean=0, std=self.noise_std)
                             noise_std = torch.normal(mean=0, std=self.noise_std)
                     mean = mean +  noise_mean.detach()
