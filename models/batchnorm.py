@@ -119,11 +119,12 @@ class _BatchNorm(_NormBase):
                         # for mean
                         noise_mean = [torch.normal(mean=mean[i], std=std[i] / sqrt_bsz) for i in range(self.num_features)]
                         noise_std = [torch.normal(mean=std[i], std=(k[i] + 2) / (4*self.noise_bsz)) for i in range(self.num_features)]
-                        noise_mean = torch.Tensor(noise_mean, requires_grad=False)
-                        noise_var = torch.Tensor(noise_std, requires_grad=False) ** 2
-                mean = mean +  noise_mean.cuda().detach()
-                var = var+ noise_var.cuda().detach()
-                        # for variance
+                        noise_mean = torch.Tensor(noise_mean )
+                        noise_var = torch.Tensor(noise_std) ** 2
+                    mean = mean +  noise_mean.cuda().detach()
+                    var = var+ noise_var.cuda().detach()
+                elif self.sample_noise and self.data_dependent:
+                    pass
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
                 input = input.view(input_shape)
