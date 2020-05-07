@@ -119,10 +119,11 @@ class _BatchNorm(_NormBase):
                         # for mean
                         noise_mean = [torch.normal(mean=mean[i], std=std[i] / sqrt_bsz) for i in range(self.num_features)]
                         noise_std = [torch.normal(mean=std[i], std=torch.sqrt((k[i] + 2) / (4*self.noise_bsz))) for i in range(self.num_features)]
-                        noise_mean = torch.stack(noise_mean)
-                        noise_var = torch.stack(noise_std) ** 2
-                    mean = mean +  noise_mean.detach()
-                    var = var+ noise_var.detach()
+                        noise_mean = torch.normal(mean=mean, std=std / sqrt_bsz)
+                        noise_std = torch.normal(mean=std, std=torch.sqrt((k + 2) / (4 * self.noise_bsz)))
+                        noise_var = noise_std ** 2
+                        mean = mean +  noise_mean.detach()
+                        var = var+ noise_var.detach()
                 elif self.sample_noise and self.data_dependent:
                     pass
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
