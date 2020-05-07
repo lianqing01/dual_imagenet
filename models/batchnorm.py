@@ -113,7 +113,7 @@ class _BatchNorm(_NormBase):
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
                     k = k/var**2 - 3
                     std = torch.sqrt(var)
-                    sqrt_bsz = torch.sqrt(self.nois_bsz)
+                    sqrt_bsz = torch.sqrt(self.noise_bsz)
                 if self.sample_noise and self.data_dependent:
                     with torch.no_grad():
                         # for mean
