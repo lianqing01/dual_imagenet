@@ -108,9 +108,6 @@ class _BatchNorm(_NormBase):
                 input = input.view([input.size(0), self.num_features, -1])
                 mean = input.mean([0,2])
                 var = (input**2).mean([0,2]) - mean**2
-                #with torch.no_grad():
-                #    self.running_mean = args.momentum * mean + (1 - args.momentum) * args.running_mean
-                #    self.running_vra = args.momentum * var + (1 - args.momentum ) * args.running_var
                 var += self.eps
                 with torch.no_grad():
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
@@ -120,8 +117,8 @@ class _BatchNorm(_NormBase):
                 if self.sample_noise and self.data_dependent:
                     with torch.no_grad():
                         # for mean
-                        noise_mean = torch.normal(mean=mean, std=std/ sqrt_bsz)
-                        noise_std = torch.normal(mean=std, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                        noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
+                        noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
                         noise_var = noise_std ** 2
                     mean = mean +  noise_mean.detach()
                     var = var+ noise_var.detach()
@@ -133,7 +130,8 @@ class _BatchNorm(_NormBase):
                 with torch.no_grad():
                     temp =  F.batch_norm(
                     input, self.running_mean, self.running_var, self.weight, self.bias,
-                    self.training or not self.track_running_stats, exponential_average_factor, self.eps)
+                    self.training or not self.track_running_stats,
+                    self.momentum, self.eps)
 
                 return output.view(input_shape)
 
