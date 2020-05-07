@@ -108,7 +108,7 @@ def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
 def vgg16_bn_moving_average(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
-def vgg16_bn_population(num_classes=10):
+def vgg16_pn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_population')
 
 

@@ -21,6 +21,9 @@ class _NormBase(Module):
         self.momentum = momentum
         self.affine = affine
         self.track_running_stats = track_running_stats
+        self.data_dependent = False
+        self.sample_noise = False
+        self.noise_bsz = 1000
         if self.affine:
             self.weight = Parameter(torch.Tensor(num_features))
             self.bias = Parameter(torch.Tensor(num_features))
@@ -79,6 +82,7 @@ class _BatchNorm(_NormBase):
         super(_BatchNorm, self).__init__(
             num_features, eps, momentum, affine, track_running_stats)
 
+
     def forward(self, input):
         self._check_input_dim(input)
 
@@ -100,48 +104,48 @@ class _BatchNorm(_NormBase):
                     else:  # use exponential moving average
                         exponential_average_factor = self.momentum
 
-            return F.batch_norm(
-                input, self.running_mean, self.running_var, self.weight, self.bias,
-                self.training or not self.track_running_stats,
-                exponential_average_factor, self.eps)
-        else:
-            input_shape = input.size()
-            input = input.view(input.size(0), self.num_features, -1)
-            output = (input - _unsqueeze_ft(self.running_mean)) * _unsqueeze_ft(torch.sqrt(1 / (self.running_var + self.eps)) * self.weight) \
-                + _unsqueeze_ft(self.bias)
-            return output.view(input_shape)
-
-        if self.training:
-            if self.momentum is None:
-                exponential_average_factor = 0.0
-            else:
-                exponential_average_factor = self.momentum
-
-            if self.training and self.track_running_stats:
-                # TODO: if statement only here to tell the jit to skip emitting this when it is None
-                if self.num_batches_tracked is not None:
-                    self.num_batches_tracked = self.num_batches_tracked + 1
-                    if self.momentum is None:  # use cumulative moving average
-                        exponential_average_factor = 1.0 / float(self.num_batches_tracked)
-                    else:  # use exponential moving average
-                        exponential_average_factor = self.momentum
                 input_shape = input.size()
-                input = input.view(input.size(0), self.num_features, -1)
-                mean = input.mean([0, 2])
-                var = input.var([0, 2])
-                peak = (input - _unsqueeze_ft(mean)).pow(4).mean([0, 2])
-                self.running_mean = (1 - exponential_average_factor) * self.running_mean + exponential_average_factor * mean
-                self.running_var = (1 - exponential_average_factor) * self.running_var + exponential_average_factor * var
-                self.track_running_stats += 1
-                output = (input - _unsqueeze_ft(self.mean)) * _unsqueeze_ft(torch.sqrt(1 / (self.var + self.eps)) * self.weight) \
+                input = input.view([input.size(0), self.num_features, -1])
+                mean = input.mean([0,2])
+                var = (input**2).mean([0,2]) - mean**2
+                var += self.eps
+                with torch.no_grad():
+                    k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
+                    k = k/var**2 - 3
+                    std = torch.sqrt(var)
+                    sqrt_bsz = torch.sqrt(torch.Tensor([self.noise_bsz]))
+                    if self.sample_noise and self.data_dependent:
+                        # for mean
+                        print(std[0] / sqrt_bsz,  mean[0])
+                        noise_mean = [torch.normal(mean=mean[i], std=std[i] / sqrt_bsz) for i in range(self.num_features)]
+                        noise_std = [torch.normal(mean=std[i], std=(k[i] + 2) / (4*self.noise_bsz)) for i in range(self.num_features)]
+                        noise_mean = torch.Tensor(noise_mean)
+                        noise_var = torch.Tensor(noise_var) ** 2
+                        mean += noise_mean
+                        var += noise_var
+                        # for variance
+                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
+                input = input.view(input_shape)
+                '''
+                if self.sample_noise and self.data_dependent:
+                    noise_mean = [torch.normal(mean=, std=[]) for i in range(self.num_features)]
+                    noise_var = [torch.normal(mean=, std=[]) for i in range(self.num_features)]
+                    mean += torch.Tensor(noise_mean).detach()
+                    var += torch.Tensor(noise_var).detach()
+                '''
+                with torch.no_grad():
+                    temp =  F.batch_norm(
+                    input, self.running_mean, self.running_var, self.weight, self.bias,
+                    self.training or not self.track_running_stats, exponential_average_factor, self.eps)
+
                 return output.view(input_shape)
 
         else:
             return F.batch_norm(
                 input, self.running_mean, self.running_var, self.weight, self.bias,
                 self.training or not self.track_running_stats,
-                exponential_average_factor, self.eps)
+                self.momentum, self.eps)
 
 
 def _unsqueeze_ft(tensor):

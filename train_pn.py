@@ -30,6 +30,7 @@ import models
 from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
+from models.batchnorm import BatchNorm2d
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -57,6 +58,9 @@ parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
+parser.add_argument('--sample_noise', default=False, type=bool)
+parser.add_argument('--data_dependent', default=False, type=bool)
+parser.add_argument('--noise_bsz', default=128, type=int)
 
 
 
@@ -380,6 +384,12 @@ if not os.path.exists(logname):
         logwriter = csv.writer(logfile, delimiter=',')
         logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
                             'test loss', 'test acc'])
+
+for m in net.modules():
+    if isinstance(m, BatchNorm2d):
+        m.sample_noise = args.sample_noise
+        m.data_dependent = args.data_dependent
+        m.noise_bsz = args.noise_bsz
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
