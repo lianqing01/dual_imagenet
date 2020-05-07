@@ -113,16 +113,18 @@ class _BatchNorm(_NormBase):
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
                     k = k/var**2 - 3
                     sqrt_bsz = torch.sqrt(self.noise_bsz) + self.eps
-                if self.sample_noise and self.data_dependent:
-                    with torch.no_grad():
-                        # for mean
+                    if self.sample_noise and self.data_dependent:
+                            # for mean
                         noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
                         noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                        noise_var = noise_std ** 2
+                    elif self.sample_noise and not self.data_dependent:
+                        noise_mean = torch.normal(mean=0, std=self.noise_std)
+                        noise_std = torch.normal(mean=0, std=self.noise_std)
+                        noise_var = noise_std ** 2
                     mean = mean +  noise_mean.detach()
-                    std = std + noise_std.detach()
-                elif self.sample_noise and self.data_dependent:
-                    pass
-                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft((1 / (std + self.eps)) * self.weight) \
+                    var = var+ noise_var.detach()
+                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
                 input = input.view(input_shape)
                 with torch.no_grad():
