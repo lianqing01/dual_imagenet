@@ -113,16 +113,16 @@ class _BatchNorm(_NormBase):
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
                     k = k/var**2 - 3
                     std = torch.sqrt(var)
-                    sqrt_bsz = torch.sqrt(torch.Tensor([self.noise_bsz]))[0]
+                    sqrt_bsz = torch.sqrt(self.nois_bsz)
                 if self.sample_noise and self.data_dependent:
                     with torch.no_grad():
                         # for mean
                         noise_mean = [torch.normal(mean=mean[i], std=std[i] / sqrt_bsz) for i in range(self.num_features)]
-                        noise_std = [torch.normal(mean=std[i], std=(k[i] + 2) / (4*self.noise_bsz)) for i in range(self.num_features)]
-                        noise_mean = torch.Tensor(noise_mean )
-                        noise_var = torch.Tensor(noise_std) ** 2
-                    mean = mean +  noise_mean.cuda().detach()
-                    var = var+ noise_var.cuda().detach()
+                        noise_std = [torch.normal(mean=std[i], std=torch.sqrt((k[i] + 2) / (4*self.noise_bsz))) for i in range(self.num_features)]
+                        noise_mean = torch.stack(noise_mean)
+                        noise_var = torch.stack(noise_std) ** 2
+                    mean = mean +  noise_mean.detach()
+                    var = var+ noise_var.detach()
                 elif self.sample_noise and self.data_dependent:
                     pass
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \

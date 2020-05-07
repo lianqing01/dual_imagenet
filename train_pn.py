@@ -385,11 +385,13 @@ if not os.path.exists(logname):
         logwriter.writerow(['epoch', 'train loss', 'reg loss', 'train acc',
                             'test loss', 'test acc'])
 
+if use_cuda:
+    device = torch.device("cuda")
 for m in net.modules():
     if isinstance(m, BatchNorm2d):
         m.sample_noise = args.sample_noise
         m.data_dependent = args.data_dependent
-        m.noise_bsz = args.noise_bsz
+        m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
