@@ -109,20 +109,21 @@ class _BatchNorm(_NormBase):
                 mean = input.mean([0,2])
                 var = (input**2).mean([0,2]) - mean**2
                 std = torch.sqrt(var)
-                with torch.no_grad():
-                    k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
-                    k = k/var**2 - 3
-                    sqrt_bsz = torch.sqrt(self.noise_bsz) + self.eps
-                    if self.sample_noise and self.data_dependent:
-                            # for mean
-                        noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
-                        noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
-                    elif self.sample_noise and not self.data_dependent:
-                        noise_mean = torch.normal(mean=0, std=self.noise_std)
-                        noise_std = torch.normal(mean=0, std=self.noise_std)
+                if self.sample_noise:
+                    with torch.no_grad():
+                        k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
+                        k = k/var**2 - 3
+                        sqrt_bsz = torch.sqrt(self.noise_bsz) + self.eps
+                        if self.sample_noise and self.data_dependent:
+                                # for mean
+                            noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
+                            noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                        elif self.sample_noise and not self.data_dependent:
+                            noise_mean = torch.normal(mean=0, std=self.noise_std)
+                            noise_std = torch.normal(mean=0, std=self.noise_std)
                     mean = mean +  noise_mean.detach()
-                    std = std+ noise_std.detach()
-                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft((1 / (std + self.eps)) * self.weight) \
+                    var = (std+ noise_std.detach()) ** 2
+                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
                 input = input.view(input_shape)
                 with torch.no_grad():
