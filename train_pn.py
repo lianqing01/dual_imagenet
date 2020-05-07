@@ -232,8 +232,8 @@ def train(epoch):
             pn_iter = iter(pn_trainloader)
             inputs_pn, targets_pn = pn_iter.__next__()
         if use_cuda:
-            inputs_pn.cuda()
-            targets_pn.cuda()
+            inputs_pn = inputs_pn.cuda()
+            targets_pn = targets_pn.cuda()
         else:
             inputs_pn = inputs_pn.to(device)
             targets_pn = targets_pn.to(device)

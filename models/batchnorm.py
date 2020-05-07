@@ -113,16 +113,16 @@ class _BatchNorm(_NormBase):
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
                     k = k/var**2 - 3
                     std = torch.sqrt(var)
-                    sqrt_bsz = torch.sqrt(torch.Tensor([self.noise_bsz]))
-                    if self.sample_noise and self.data_dependent:
+                    sqrt_bsz = torch.sqrt(torch.Tensor([self.noise_bsz]))[0]
+                if self.sample_noise and self.data_dependent:
+                    with torch.no_grad():
                         # for mean
-                        print(std[0] / sqrt_bsz,  mean[0])
                         noise_mean = [torch.normal(mean=mean[i], std=std[i] / sqrt_bsz) for i in range(self.num_features)]
                         noise_std = [torch.normal(mean=std[i], std=(k[i] + 2) / (4*self.noise_bsz)) for i in range(self.num_features)]
-                        noise_mean = torch.Tensor(noise_mean)
-                        noise_var = torch.Tensor(noise_var) ** 2
-                        mean += noise_mean
-                        var += noise_var
+                        noise_mean = torch.Tensor(noise_mean, requires_grad=False)
+                        noise_var = torch.Tensor(noise_std, requires_grad=False) ** 2
+                mean = mean +  noise_mean.cuda().detach()
+                var = var+ noise_var.cuda().detach()
                         # for variance
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
