@@ -24,6 +24,7 @@ class _NormBase(Module):
         self.data_dependent = False
         self.sample_noise = False
         self.noise_bsz = 1000
+        self.sample_mean = None
         if self.affine:
             self.weight = Parameter(torch.Tensor(num_features))
             self.bias = Parameter(torch.Tensor(num_features))
@@ -119,8 +120,8 @@ class _BatchNorm(_NormBase):
                             noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
                             noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
                         elif self.sample_noise and self.data_dependent == False:
-                            noise_mean = torch.normal(mean=0, std=self.noise_std)
-                            noise_std = torch.normal(mean=0, std=self.noise_std)
+                            noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                            noise_std = torch.normal(mean=self.sample_mean, std=self.noise_std)
                     mean = mean +  noise_mean.detach()
                     var = (std+ noise_std.detach()) ** 2
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \

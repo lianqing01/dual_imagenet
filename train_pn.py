@@ -405,6 +405,7 @@ for m in net.modules():
         m.data_dependent = args.data_dependent
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
+        m.sample_mean = torch.zeros(m.num_features).to(device)
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
