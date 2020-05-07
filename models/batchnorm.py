@@ -109,9 +109,6 @@ class _BatchNorm(_NormBase):
                 mean = input.mean([0,2])
                 var = (input**2).mean([0,2]) - mean**2
 
-                with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean.detach()
-                    self.running_vra = (1 - self.momentum) * self.running_var + self.momentum * var.detach()
                 var += self.eps
                 with torch.no_grad():
                     k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
@@ -131,6 +128,11 @@ class _BatchNorm(_NormBase):
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                 + _unsqueeze_ft(self.bias)
                 input = input.view(input_shape)
+                with torch.no_grad():
+                    temp =  F.batch_norm(
+                    input, self.running_mean, self.running_var, self.weight, self.bias,
+                    self.training or not self.track_running_stats,
+                    self.momentum, self.eps)
 
                 return output.view(input_shape)
 
