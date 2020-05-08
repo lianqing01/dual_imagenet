@@ -121,17 +121,20 @@ class _BatchNorm(_NormBase):
                             group_mean = input_group.mean([1,3]) - mean.unsqueeze(0)
                             group_var = (input_group**2).mean([1,3]) - input_group.mean([1,3]) **2
 
-                            group_var[group_var<0] = 0
+                            #group_var[group_var<0] = 0
+                            group_var = torch.clamp(group_var, min=0)
                             group_std = torch.sqrt(group_var)
                             # sample_mean_var
                             group_std = group_std - std.unsqueeze(0)
 
                             sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
-                            sample_mean_var[sample_mean_var<0] = 0
+                            #sample_mean_var[sample_mean_var<0] = 0
+                            sample_mean_var = torch.clamp(sample_mean_var, min=0)
                             sample_mean_std = torch.sqrt(sample_mean_var)
                             #sample std var
                             sample_std_var = (group_std**2).mean(0) - group_std.mean(0)**2
-                            sample_std_var[sample_std_var<0] = 0
+                            #sample_std_var[sample_std_var<0] = 0
+                            sample_std_var = torch.clamp(sample_std_var, min=0)
 
                             sample_std_std = torch.sqrt(sample_std_var)
                             # version 1
