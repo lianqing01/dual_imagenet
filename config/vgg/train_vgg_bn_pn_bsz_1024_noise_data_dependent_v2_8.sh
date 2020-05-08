@@ -5,4 +5,4 @@ python train_pn.py --model vgg16_pn \
     --sample_noise True \
     --data_dependent True \
     --noise_bsz 8 \
-    --lr 0.05 \
+    --lr 0.005 \
