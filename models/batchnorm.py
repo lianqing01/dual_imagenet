@@ -13,7 +13,7 @@ class _NormBase(Module):
     __constants__ = ['track_running_stats', 'momentum', 'eps',
                      'num_features', 'affine']
 
-    def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
+    def __init__(self, num_features, eps=1e-4, momentum=0.1, affine=True,
                  track_running_stats=True):
         super(_NormBase, self).__init__()
         self.num_features = num_features
@@ -117,15 +117,21 @@ class _BatchNorm(_NormBase):
                                 # for mean
 
                             group = int(bsz/self.noise_bsz)
-                            input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1])
+                            input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1]).clone()
+                            group_mean = input_group.mean([1,3])
+                            input_group = input_group - mean.unsqueeze(0).unsqueeze(1).unsqueeze(-1)
                             group_mean = input_group.mean([1,3])
                             group_var = (input_group**2).mean([1,3]) - group_mean **2
+                            group_var[group_var<0] = 0
                             group_std = torch.sqrt(group_var)
+                            # sample_mean_var
 
-                            group_std_mean = group_std.mean(0)
-                            sample_mean_var = group_mean.var(0)
+                            sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
+                            sample_mean_var[sample_mean_var<0] = 0
                             sample_mean_std = torch.sqrt(sample_mean_var)
-                            sample_std_var = group_std.var(0)
+                            #sample std var
+                            sample_std_var = (group_std**2).mean(0) - group_std.mean(0)**2
+                            sample_std_var[sample_std_var<0] = 0
                             sample_std_std = torch.sqrt(sample_std_var)
                             # version 1
                             #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
