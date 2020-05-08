@@ -106,19 +106,31 @@ class _BatchNorm(_NormBase):
                         exponential_average_factor = self.momentum
 
                 input_shape = input.size()
+                bsz = input.size(0)
                 input = input.view([input.size(0), self.num_features, -1])
                 mean = input.mean([0,2])
                 var = (input**2).mean([0,2]) - mean**2
                 std = torch.sqrt(var)
                 if self.sample_noise:
                     with torch.no_grad():
-                        k = (input - _unsqueeze_ft(mean)).pow(4).mean([0,2])
-                        k = k/var**2 - 3
-                        sqrt_bsz = torch.sqrt(self.noise_bsz) + self.eps
                         if self.sample_noise and self.data_dependent:
                                 # for mean
-                            noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
-                            noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+
+                            group = int(bsz/self.noise_bsz)
+                            input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1])
+                            group_mean = input_group.mean([1,3])
+                            group_var = (input_group**2).mean([1,3]) - group_mean **2
+                            group_std = torch.sqrt(group_var)
+                            group_std_mean = group_std.mean(0)
+                            sample_mean_std = torch.sqrt((group_mean**2).mean(0) - mean**2)
+                            sample_std_std = torch.sqrt((group_std**2).mean(0) - group_std_mean**2)
+                            # version 1
+                            #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
+                            #noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                            # version 2
+                            noise_mean = torch.normal(mean=0, std=sample_mean_std)
+                            noise_std = torch.normal(mean=0, std=sample_std_std)
+
                         elif self.sample_noise and self.data_dependent == False:
                             noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
                             noise_std = torch.normal(mean=self.sample_mean, std=self.noise_std)
