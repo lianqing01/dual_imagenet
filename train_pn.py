@@ -133,6 +133,7 @@ elif args.dataset == 'CIFAR100':
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
+                                          drop_last=True,
                                           shuffle=True, num_workers=8)
 pn_trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.pn_batch_size - args.batch_size,

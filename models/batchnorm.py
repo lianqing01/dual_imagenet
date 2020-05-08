@@ -121,9 +121,13 @@ class _BatchNorm(_NormBase):
                             group_mean = input_group.mean([1,3])
                             group_var = (input_group**2).mean([1,3]) - group_mean **2
                             group_std = torch.sqrt(group_var)
+
                             group_std_mean = group_std.mean(0)
-                            sample_mean_std = torch.sqrt((group_mean**2).mean(0) - mean**2)
-                            sample_std_std = torch.sqrt((group_std**2).mean(0) - group_std_mean**2)
+                            sample_mean_var = ((group_mean**2).mean(0) - mean**2)
+                            sample_mean_std = torch.sqrt(sample_mean_var)
+                            sample_std_var = ((group_std**2).mean(0) - group_std_mean**2)
+                            sample_std_var[sample_std_var<0]=0
+                            sample_std_std = torch.sqrt(sample_std_var)
                             # version 1
                             #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
                             #noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
