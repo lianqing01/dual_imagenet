@@ -118,13 +118,13 @@ class _BatchNorm(_NormBase):
 
                             group = int(bsz/self.noise_bsz)
                             input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1]).clone()
-                            group_mean = input_group.mean([1,3])
-                            input_group = input_group - mean.unsqueeze(0).unsqueeze(1).unsqueeze(-1)
-                            group_mean = input_group.mean([1,3])
-                            group_var = (input_group**2).mean([1,3]) - group_mean **2
+                            group_mean = input_group.mean([1,3]) - mean.unsqueeze(0)
+                            group_var = (input_group**2).mean([1,3]) - input_group.mean([1,3]) **2
+
                             group_var[group_var<0] = 0
                             group_std = torch.sqrt(group_var)
                             # sample_mean_var
+                            group_std = group_std - std.unsqueeze(0)
 
                             sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
                             sample_mean_var[sample_mean_var<0] = 0
@@ -132,6 +132,7 @@ class _BatchNorm(_NormBase):
                             #sample std var
                             sample_std_var = (group_std**2).mean(0) - group_std.mean(0)**2
                             sample_std_var[sample_std_var<0] = 0
+
                             sample_std_std = torch.sqrt(sample_std_var)
                             # version 1
                             #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
