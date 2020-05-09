@@ -92,6 +92,10 @@ class VGG(nn.Module):
                                    #Constraint_Affine2d(in_channels),
                                    nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                    nn.ReLU(inplace=True)]
+                elif with_bn =='gn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                nn.GroupNorm(8, x),
+                               nn.ReLU(inplace=True)]
 
                 else:
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
@@ -110,6 +114,10 @@ def vgg16_bn_moving_average(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
 def vgg16_pn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_population')
+
+
+def vgg16_gn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='gn')
 
 
 def vgg16_brn(num_classes=10):

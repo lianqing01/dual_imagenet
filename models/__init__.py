@@ -14,3 +14,4 @@ from .resnet_constraintbn_init import *
 from .resnet_nobn_v2 import *
 from .fixup_resnet_imagenet import *
 from .resnet_brn import *
+from .resnet_gn import resnetgn_50
