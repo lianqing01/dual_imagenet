@@ -8,7 +8,7 @@ from torch.nn import init
 
 
 class _NormBase(Module):
-    """Common base of _InstanceNorm and _BatchNorm"""
+    """Common base of _InstanceNorm and _InstanceNorm"""
     _version = 2
     __constants__ = ['track_running_stats', 'momentum', 'eps',
                      'num_features', 'affine']
@@ -76,11 +76,11 @@ class _NormBase(Module):
             missing_keys, unexpected_keys, error_msgs)
 
 
-class _BatchNorm(_NormBase):
+class _InstanceNorm(_NormBase):
 
     def __init__(self, num_features, eps=1e-5, momentum=0.1, affine=True,
                  track_running_stats=True):
-        super(_BatchNorm, self).__init__(
+        super(_InstanceNorm, self).__init__(
             num_features, eps, momentum, affine, track_running_stats)
 
 
@@ -90,92 +90,70 @@ class _BatchNorm(_NormBase):
         # exponential_average_factor is set to self.momentum
         # (when it is available) only so that it gets updated
         # in ONNX graph when this node is exported to ONNX.
-        if self.training:
-            if self.momentum is None:
-                exponential_average_factor = 0.0
-            else:
-                exponential_average_factor = self.momentum
 
-            if self.training and self.track_running_stats:
-                # TODO: if statement only here to tell the jit to skip emitting this when it is None
-                if self.num_batches_tracked is not None:
-                    self.num_batches_tracked = self.num_batches_tracked + 1
-                    if self.momentum is None:  # use cumulative moving average
-                        exponential_average_factor = 1.0 / float(self.num_batches_tracked)
-                    else:  # use exponential moving average
-                        exponential_average_factor = self.momentum
+        input_shape = input.size()
+        bsz = input.size(0)
+        input = input.view([input.size(0), self.num_features, -1])
+        mean = input.mean([2])
+        var = (input**2).mean([2]) - mean**2
+        std = torch.sqrt(var)
+        if self.sample_noise:
+            with torch.no_grad():
+                if self.sample_noise and self.data_dependent:
+                        # for mean
 
-                input_shape = input.size()
-                bsz = input.size(0)
-                input = input.view([input.size(0), self.num_features, -1])
-                mean = input.mean([0,2])
-                var = (input**2).mean([0,2]) - mean**2
-                std = torch.sqrt(var)
-                if self.sample_noise:
-                    with torch.no_grad():
-                        if self.sample_noise and self.data_dependent:
-                                # for mean
+                    group = int(bsz/self.noise_bsz)
+                    input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1]).clone()
+                    group_mean = input_group.mean([1,3]) - mean.unsqueeze(0)
+                    group_var = (input_group**2).mean([1,3]) - input_group.mean([1,3]) **2
 
-                            group = int(bsz/self.noise_bsz)
-                            input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1]).clone()
-                            group_mean = input_group.mean([1,3])
-                            group_var = (input_group**2).mean([1,3]) - mean.unsqueeze(0) **2
+                    #group_var[group_var<0] = 0
+                    group_var = torch.clamp(group_var, min=0)
+                    # sample_mean_var
 
-                            #group_var[group_var<0] = 0
-                            group_var = torch.clamp(group_var, min=0)
-                            # sample_mean_var
+                    sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
+                    sample_mean_var *= (group) / float(group - 1)
+                    #sample_mean_var[sample_mean_var<0] = 0
+                    sample_mean_var = torch.clamp(sample_mean_var, min=0)
+                    sample_mean_std = torch.sqrt(sample_mean_var)
+                    #sample std var
+                    sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
+                    sample_var_var *= (group) / float(group - 1)
+                    #sample_std_var[sample_std_var<0] = 0
+                    sample_var_var = torch.clamp(sample_var_var, min=0)
 
-                            sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
-                            sample_mean_var *= (group) / float(group - 1)
-                            #sample_mean_var[sample_mean_var<0] = 0
-                            sample_mean_var = torch.clamp(sample_mean_var, min=0)
-                            sample_mean_std = torch.sqrt(sample_mean_var)
-                            #sample std var
-                            sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
-                            sample_var_var *= (group) / float(group - 1)
-                            #sample_std_var[sample_std_var<0] = 0
-                            sample_var_var = torch.clamp(sample_var_var, min=0)
+                    sample_var_std = torch.sqrt(sample_var_var)
+                    # version 1
+                    #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
+                    #noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                    # version 2
+                    noise_mean = torch.normal(mean=0, std=sample_mean_std)
+                    noise_var = torch.normal(mean=0, std=sample_var_std)
 
-                            sample_var_std = torch.sqrt(sample_var_var)
-                            # version 1
-                            #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
-                            #noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
-                            # version 2
-                            noise_mean = torch.normal(mean=0, std=sample_mean_std)
-                            noise_var = torch.normal(mean=0, std=sample_var_std)
-
-                        elif self.sample_noise and self.data_dependent == False:
-                            noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
-                            noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
-                        # check noise mean and noise var like batch renormalization
-                        # for noise mean
-                        # for noise var
-                        noise_var = torch.clamp(noise_var, min=-1 * var.min() + 1/self.r_max, max=self.r_max)
-                    mean = mean +  noise_mean.detach()
-                    var = var + noise_var.detach()
-                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
-                + _unsqueeze_ft(self.bias)
-                input = input.view(input_shape)
-                with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
-                    self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
+                elif self.sample_noise and self.data_dependent == False:
+                    noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                    noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                # check noise mean and noise var like batch renormalization
+                # for noise mean
+                # for noise var
+                noise_var = torch.clamp(noise_var, min = 1/self.r_max, max=self.r_max)
+            mean = mean +  noise_mean.detach()
+            var = var + noise_var.detach()
+        output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+        + _unsqueeze_ft(self.bias)
+        input = input.view(input_shape)
 
 
-                return output.view(input_shape)
+        return output.view(input_shape)
 
-        else:
-            return F.batch_norm(
-                input, self.running_mean, self.running_var, self.weight, self.bias,
-                self.training or not self.track_running_stats,
-                self.momentum, self.eps)
 
 
 def _unsqueeze_ft(tensor):
-    return tensor.unsqueeze(0).unsqueeze(-1)
-class BatchNorm1d(_BatchNorm):
-    r"""Applies Batch Normalization over a 2D or 3D input (a mini-batch of 1D
+    return tensor.unsqueeze(-1)
+class InstanceNorm1d(_InstanceNorm):
+    r"""Applies Instance Normalization over a 2D or 3D input (a mini-batch of 1D
     inputs with optional additional channel dimension) as described in the paper
-    `Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
+    `Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
 
     .. math::
 
@@ -203,8 +181,8 @@ class BatchNorm1d(_BatchNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the
         new observed value.
 
-    Because the Batch Normalization is done over the `C` dimension, computing statistics
-    on `(N, L)` slices, it's common terminology to call this Temporal Batch Normalization.
+    Because the Instance Normalization is done over the `C` dimension, computing statistics
+    on `(N, L)` slices, it's common terminology to call this Temporal Instance Normalization.
 
     Args:
         num_features: :math:`C` from an expected input of size
@@ -228,13 +206,13 @@ class BatchNorm1d(_BatchNorm):
     Examples::
 
         >>> # With Learnable Parameters
-        >>> m = nn.BatchNorm1d(100)
+        >>> m = nn.InstanceNorm1d(100)
         >>> # Without Learnable Parameters
-        >>> m = nn.BatchNorm1d(100, affine=False)
+        >>> m = nn.InstanceNorm1d(100, affine=False)
         >>> input = torch.randn(20, 100)
         >>> output = m(input)
 
-    .. _`Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
+    .. _`Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
         https://arxiv.org/abs/1502.03167
     """
 
@@ -244,10 +222,10 @@ class BatchNorm1d(_BatchNorm):
                              .format(input.dim()))
 
 
-class BatchNorm2d(_BatchNorm):
-    r"""Applies Batch Normalization over a 4D input (a mini-batch of 2D inputs
+class InstanceNorm2d(_InstanceNorm):
+    r"""Applies Instance Normalization over a 4D input (a mini-batch of 2D inputs
     with additional channel dimension) as described in the paper
-    `Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
+    `Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
 
     .. math::
 
@@ -275,8 +253,8 @@ class BatchNorm2d(_BatchNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the
         new observed value.
 
-    Because the Batch Normalization is done over the `C` dimension, computing statistics
-    on `(N, H, W)` slices, it's common terminology to call this Spatial Batch Normalization.
+    Because the Instance Normalization is done over the `C` dimension, computing statistics
+    on `(N, H, W)` slices, it's common terminology to call this Spatial Instance Normalization.
 
     Args:
         num_features: :math:`C` from an expected input of size
@@ -300,13 +278,13 @@ class BatchNorm2d(_BatchNorm):
     Examples::
 
         >>> # With Learnable Parameters
-        >>> m = nn.BatchNorm2d(100)
+        >>> m = nn.InstanceNorm2d(100)
         >>> # Without Learnable Parameters
-        >>> m = nn.BatchNorm2d(100, affine=False)
+        >>> m = nn.InstanceNorm2d(100, affine=False)
         >>> input = torch.randn(20, 100, 35, 45)
         >>> output = m(input)
 
-    .. _`Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
+    .. _`Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
         https://arxiv.org/abs/1502.03167
     """
 
@@ -316,10 +294,10 @@ class BatchNorm2d(_BatchNorm):
                              .format(input.dim()))
 
 
-class BatchNorm3d(_BatchNorm):
-    r"""Applies Batch Normalization over a 5D input (a mini-batch of 3D inputs
+class InstanceNorm3d(_InstanceNorm):
+    r"""Applies Instance Normalization over a 5D input (a mini-batch of 3D inputs
     with additional channel dimension) as described in the paper
-    `Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
+    `Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`_ .
 
     .. math::
 
@@ -347,9 +325,9 @@ class BatchNorm3d(_BatchNorm):
         where :math:`\hat{x}` is the estimated statistic and :math:`x_t` is the
         new observed value.
 
-    Because the Batch Normalization is done over the `C` dimension, computing statistics
-    on `(N, D, H, W)` slices, it's common terminology to call this Volumetric Batch Normalization
-    or Spatio-temporal Batch Normalization.
+    Because the Instance Normalization is done over the `C` dimension, computing statistics
+    on `(N, D, H, W)` slices, it's common terminology to call this Volumetric Instance Normalization
+    or Spatio-temporal Instance Normalization.
 
     Args:
         num_features: :math:`C` from an expected input of size
@@ -373,13 +351,13 @@ class BatchNorm3d(_BatchNorm):
     Examples::
 
         >>> # With Learnable Parameters
-        >>> m = nn.BatchNorm3d(100)
+        >>> m = nn.InstanceNorm3d(100)
         >>> # Without Learnable Parameters
-        >>> m = nn.BatchNorm3d(100, affine=False)
+        >>> m = nn.InstanceNorm3d(100, affine=False)
         >>> input = torch.randn(20, 100, 35, 45, 10)
         >>> output = m(input)
 
-    .. _`Batch Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
+    .. _`Instance Normalization: Accelerating Deep Network Training by Reducing Internal Covariate Shift`:
         https://arxiv.org/abs/1502.03167
     """
 
