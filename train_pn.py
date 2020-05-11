@@ -72,6 +72,7 @@ parser.add_argument('--sample_noise', default=False, type=str2bool)
 parser.add_argument('--data_dependent', default=False, type=str2bool)
 parser.add_argument('--noise_bsz', default=128, type=int)
 parser.add_argument('--noise_std', default=0, type=float)
+parser.add_argument('--r_max', default=0.5, type=float)
 
 
 
@@ -407,6 +408,7 @@ for m in net.modules():
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
+        m.r_max = args.r_max
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
