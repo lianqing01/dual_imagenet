@@ -159,14 +159,14 @@ class _BatchNorm(_NormBase):
                             var = var + noise_var.detach()
                         else:
                             noise_var = var + noise_var
-                            noise_var = torch.clamp(noise_var, min=self.eps)
+                            noise_var = torch.clamp(noise_var, min=0)
                 if not self.batch_renorm:
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                     + _unsqueeze_ft(self.bias)
                 else:
                     with torch.no_grad():
                         r = torch.sqrt(var + self.eps) / torch.sqrt(noise_var + self.eps)
-                        r = r.clamp(min=1/self.r_max, max = self.r_max)
+                        r = r.clamp(min=1 - float(self.r_max), max =1 + float(self.r_max))
                         d = noise_mean / torch.sqrt(noise_var + self.eps)
                         d = d.clamp(min=-0.5, max=0.5)
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps))) * _unsqueeze_ft(r) + \
@@ -177,6 +177,7 @@ class _BatchNorm(_NormBase):
                 with torch.no_grad():
                     self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * unbiased_mean
                     self.running_var = (1 - self.momentum) * self.running_var + self.momentum * unbiased_var
+
 
 
                 return output.view(input_shape)
