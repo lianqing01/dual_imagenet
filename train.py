@@ -362,6 +362,8 @@ if not os.path.exists(logname):
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
+    wandb.log({"test/train_test_loss_gap": test_loss - train_loss}, step=epoch)
+    wandb.log({"test/train_test_acc_gap": train_acc - test_acc}, step=epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:
