@@ -167,7 +167,7 @@ class _BatchNorm(_NormBase):
                     with torch.no_grad():
                         r = torch.sqrt(var + self.eps) / torch.sqrt(noise_var + self.eps)
                         r = r.clamp(min=1/self.r_max, max = self.r_max)
-                        d = noise_mean / torch.sqrt(var + self.eps)
+                        d = noise_mean / torch.sqrt(noise_var + self.eps)
                         d = d.clamp(min=-0.5, max=0.5)
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps))) * _unsqueeze_ft(r) + \
                         _unsqueeze_ft(d)
