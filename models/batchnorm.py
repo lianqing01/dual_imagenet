@@ -25,6 +25,7 @@ class _NormBase(Module):
         self.sample_noise = False
         self.noise_bsz = 1000
         self.sample_mean = None
+        self.batch_renorm=False
         if self.affine:
             self.weight = Parameter(torch.Tensor(num_features))
             self.bias = Parameter(torch.Tensor(num_features))
@@ -110,6 +111,8 @@ class _BatchNorm(_NormBase):
                 input = input.view([input.size(0), self.num_features, -1])
                 mean = input.mean([0,2])
                 var = (input**2).mean([0,2]) - mean**2
+                unbiased_mean = mean.clone()
+                unbiased_var = var.clone () * (bsz/float(bsz - 1))
                 std = torch.sqrt(var)
                 if self.sample_noise:
                     with torch.no_grad():
@@ -126,13 +129,13 @@ class _BatchNorm(_NormBase):
                             # sample_mean_var
 
                             sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
-                            sample_mean_var *= (group) / float(group - 1)
+                            sample_mean_var *= (group) / max(float(group - 1), 1)
                             #sample_mean_var[sample_mean_var<0] = 0
                             sample_mean_var = torch.clamp(sample_mean_var, min=0)
                             sample_mean_std = torch.sqrt(sample_mean_var)
                             #sample std var
                             sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
-                            sample_var_var *= (group) / float(group - 1)
+                            sample_var_var *= (group) / max(float(group - 1), 1)
                             #sample_std_var[sample_std_var<0] = 0
                             sample_var_var = torch.clamp(sample_var_var, min=0)
 
@@ -150,15 +153,30 @@ class _BatchNorm(_NormBase):
                         # check noise mean and noise var like batch renormalization
                         # for noise mean
                         # for noise var
-                        noise_var = torch.clamp(noise_var, min=-1 * var.min() + 1/self.r_max, max=self.r_max)
-                    mean = mean +  noise_mean.detach()
-                    var = var + noise_var.detach()
-                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
-                + _unsqueeze_ft(self.bias)
+                        if not self.batch_renorm:
+                            noise_var = torch.clamp(noise_var, min=-1 * var.min() + 1/self.r_max, max=self.r_max)
+                            mean = mean + noise_mean.detach()
+                            var = var + noise_var.detach()
+                        else:
+                            noise_var = var + noise_var
+                            noise_var = torch.clamp(noise_var, min=self.eps)
+                if not self.batch_renorm:
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+                    + _unsqueeze_ft(self.bias)
+                else:
+                    with torch.no_grad():
+                        r = torch.sqrt(var + self.eps) / torch.sqrt(noise_var + self.eps)
+                        r = r.clamp(min=1/self.r_max, max = self.r_max)
+                        d = noise_mean / torch.sqrt(var + self.eps)
+                        d = d.clamp(min=-0.5, max=0.5)
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps))) * _unsqueeze_ft(r) + \
+                        _unsqueeze_ft(d)
+                    output = output * _unsqueeze_ft(self.weight) + _unsqueeze_ft(self.bias)
+
                 input = input.view(input_shape)
                 with torch.no_grad():
-                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * mean
-                    self.running_var = (1 - self.momentum) * self.running_var + self.momentum * var
+                    self.running_mean = (1 - self.momentum) * self.running_mean + self.momentum * unbiased_mean
+                    self.running_var = (1 - self.momentum) * self.running_var + self.momentum * unbiased_var
 
 
                 return output.view(input_shape)

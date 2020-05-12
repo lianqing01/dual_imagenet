@@ -62,7 +62,7 @@ parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=1)
+parser.add_argument('--grad_clip', default=3)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
@@ -73,7 +73,7 @@ parser.add_argument('--data_dependent', default=False, type=str2bool)
 parser.add_argument('--noise_bsz', default=128, type=int)
 parser.add_argument('--noise_std', default=0, type=float)
 parser.add_argument('--r_max', default=0.5, type=float)
-
+parser.add_argument('--batch_renorm', default=False, type=str2bool)
 
 
 # dataset
@@ -97,7 +97,7 @@ logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir
 
 
 
-wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
+wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
@@ -136,7 +136,8 @@ trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.batch_size,
                                           drop_last=True,
                                           shuffle=True, num_workers=8)
-pn_trainloader = torch.utils.data.DataLoader(trainset,
+if args.pn_batch_size - args.batch_size > 0:
+    pn_trainloader = torch.utils.data.DataLoader(trainset,
                                           batch_size=args.pn_batch_size - args.batch_size,
                                           drop_last=True,
                                           shuffle=True, num_workers=8)
@@ -231,7 +232,8 @@ def train(epoch):
     total = 0
     acc = AverageMeter(100)
     batch_time = AverageMeter()
-    pn_iter = iter(pn_trainloader)
+    if args.pn_batch_size - args.batch_size > 0:
+        pn_iter = iter(pn_trainloader)
     for batch_idx, (inputs, targets) in enumerate(trainloader):
         start = time.time()
         if use_cuda:
@@ -239,19 +241,20 @@ def train(epoch):
         else:
             inputs = inputs.to(device)
             targets = targets.to(device)
-        try:
-            inputs_pn, targets_pn = pn_iter.__next__()
-        except:
-            pn_iter = iter(pn_trainloader)
-            inputs_pn, targets_pn = pn_iter.__next__()
-        if use_cuda:
-            inputs_pn = inputs_pn.cuda()
-            targets_pn = targets_pn.cuda()
-        else:
-            inputs_pn = inputs_pn.to(device)
-            targets_pn = targets_pn.to(device)
-        inputs = torch.cat([inputs, inputs_pn],dim=0)
-        targets = torch.cat([targets, targets_pn], dim=0)
+        if args.pn_batch_size - args.batch_size > 0:
+            try:
+                inputs_pn, targets_pn = pn_iter.__next__()
+            except:
+                pn_iter = iter(pn_trainloader)
+                inputs_pn, targets_pn = pn_iter.__next__()
+            if use_cuda:
+                inputs_pn = inputs_pn.cuda()
+                targets_pn = targets_pn.cuda()
+            else:
+                inputs_pn = inputs_pn.to(device)
+                targets_pn = targets_pn.to(device)
+            inputs = torch.cat([inputs, inputs_pn],dim=0)
+            targets = torch.cat([targets, targets_pn], dim=0)
 
 
 
@@ -409,6 +412,7 @@ for m in net.modules():
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
         m.r_max = args.r_max
+        m.batch_renorm = args.batch_renorm
 
 for epoch in range(start_epoch, args.epoch):
     train_loss, reg_loss, train_acc = train(epoch)

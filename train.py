@@ -79,7 +79,7 @@ logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir
 
 
 
-wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
+wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 

@@ -65,10 +65,6 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
-                elif with_bn == 'bn_moving_average':
-                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                               nn.BatchNorm2d(x),
-                               nn.ReLU(inplace=True)]
 
                 elif with_bn == 'brn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
