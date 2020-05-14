@@ -271,6 +271,10 @@ if args.update_affine_only == True:
             m.update_affine_only = True
 
 
+if use_cuda:
+    device = torch.device("cuda")
+print(args.data_dependent)
+
 def train(epoch):
     logger.info('\nEpoch: %d' % epoch)
     net.train()
@@ -522,7 +526,6 @@ for m in net.modules():
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
 
-f
 def checkpoint(acc, epoch):
     # Save checkpoint.
     logger.info('Saving..')

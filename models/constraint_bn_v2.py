@@ -78,6 +78,7 @@ class Constraint_Norm(nn.Module):
                     pass
                 else:
                     noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                    noise_mean = noise_mean.view(self.mu_.size())
                 x = x - (self.mu_ + noise_mean)
             else:
                 x = x - self.mu_
@@ -88,7 +89,11 @@ class Constraint_Norm(nn.Module):
         # var
         if self.pre_affine:
             if self.sample_noise:
-                noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                if self.noise_data_dependent:
+                    pass
+                else:
+                    noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                    noise_var = noise_var.view(self.gamma_.size())
                 x = x * (self.gamma_ + noise_var)
             else:
                 x = x * self.gamma_
