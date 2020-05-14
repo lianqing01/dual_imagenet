@@ -33,6 +33,17 @@ try:
 except:
     pass
 
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
 parser.add_argument('--resume', '-r', action='store_true',
@@ -63,18 +74,23 @@ parser.add_argument('--constraint_lr', default=0.1, type=float)
 parser.add_argument('--constraint_decay', default=1e-3, type=str)
 parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
 parser.add_argument('--decay_constraint', default=-1, type=int)
-parser.add_argument('--update_affine_only', default=False, type=bool)
+parser.add_argument('--update_affine_only', default=False, type=str2bool)
 
 # two layer
 parser.add_argument('--two_layer', action='store_true', default=False)
 
 # for lr scheduler
-parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
+parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--decrease_affine_lr', default=1, type=float)
-parser.add_argument('--decrease_with_conv_bias', default=False, type=bool)
+parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
 parser.add_argument('--affine_momentum', default=0.9, type=float)
 parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
+
+# for adding noise
+parser.add_argument('--sample_noise', default=False, type=str2bool)
+parser.add_argument('--data_dependent', default=True, type=str2bool)
+parser.add_argument('--noise_std', default=0, type=float)
 
 
 
@@ -499,7 +515,14 @@ def test(epoch):
 
     return (test_loss/batch_idx, 100.*correct/total)
 
+for m in net.modules():
+    if isinstance(m, Constraint_Norm):
+        m.sample_noise = args.sample_noise
+        m.data_dependent = args.data_dependent
+        m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
+        m.sample_mean = torch.zeros(m.num_features).to(device)
 
+f
 def checkpoint(acc, epoch):
     # Save checkpoint.
     logger.info('Saving..')

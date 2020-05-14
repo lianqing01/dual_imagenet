@@ -50,6 +50,9 @@ class Constraint_Norm(nn.Module):
         self.register_buffer("var", torch.zeros(num_features))
         self.register_buffer("tracking_times", torch.tensor(0, dtype=torch.long))
         self.update_affine_only = False
+        self.sample_noise=False
+        self.noise_data_dependent=False
+        self.sample_mean = None
 
     def get_mean_var(self):
         with torch.no_grad():
@@ -70,29 +73,26 @@ class Constraint_Norm(nn.Module):
         self.pre_mean = x.mean(self.norm_dim)
         self.pre_var = (x*x).mean(self.norm_dim)
         if self.pre_affine:
-            if self.update_affine_only:
-                x_ = x.detach() - self.mu_
-                mean = self.lagrangian.get_weighted_mean(x_, self.norm_dim)
-                x = x - self.mu_.detach()
+            if self.sample_noise:
+                if self.noise_data_dependent:
+                    pass
+                else:
+                    noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                x = x - (self.mu_ + noise_mean)
             else:
                 x = x - self.mu_
-                mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         else:
             mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
-        try:
-            self.mean += mean.detach()
-        except:
-            import pdb
-            pdb.set_trace()
+        self.mean += mean.detach()
         # var
         if self.pre_affine:
-            if self.update_affine_only:
-                x_ = x.detach() * self.gamma_
-                var = self.lagrangian.get_weighted_var(x_, self.norm_dim)
-                x = x * self.gamma_.detach()
+            if self.sample_noise:
+                noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
+                x = x * (self.gamma_ + noise_var)
             else:
                 x = x * self.gamma_
-                var = self.lagrangian.get_weighted_var(x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(x, self.norm_dim)
         else:
             var = self.lagrangian.get_weighted_var(x, self.norm_dim)
         self.var += var.detach()
