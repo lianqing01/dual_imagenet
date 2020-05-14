@@ -74,6 +74,7 @@ parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--decrease_affine_lr', default=1, type=float)
 parser.add_argument('--decrease_with_conv_bias', default=False, type=bool)
 parser.add_argument('--affine_momentum', default=0.9, type=float)
+parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
 
 
 
@@ -102,7 +103,7 @@ args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).re
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
-wandb.init(project="dual_bn", dir="results/{}".format(args.log_dir),
+wandb.init(project="dual_bn_v2", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
 wandb.config.update(args)
 
@@ -208,6 +209,7 @@ else:
                             'weight_decay': args.constraint_decay},
                        {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, net.parameters()),
                             'lr': affine_lr,
+                            'weight_decay': args.affine_weight_decay,
                             'momentum': args.affine_momentum}
                        ],
                       lr=args.lr, momentum=0.9,

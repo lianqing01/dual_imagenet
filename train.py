@@ -55,6 +55,7 @@ parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=bool)
 parser.add_argument('--schedule', default=[100,150])
 parser.add_argument('--fixup', default=False)
 parser.add_argument('--decrease_affine', default=False)
+parser.add_argument('--fixup_scale_decay', default=1e-4, type=float)
 
 
 
@@ -170,8 +171,8 @@ if args.fixup:
     parameters_scale = [p[1] for p in net.named_parameters() if 'scale' in p[0]]
     parameters_others = [p[1] for p in net.named_parameters() if not ('bias' in p[0] or 'scale' in p[0])]
     optimizer = optim.SGD(
-            [{'params': parameters_bias, 'lr': args.lr/10.},
-            {'params': parameters_scale, 'lr': args.lr/10.},
+            [{'params': parameters_bias, 'lr': args.lr/10., 'weight_decay': args.fixup_scale_decay},
+            {'params': parameters_scale, 'lr': args.lr/10., 'weight_decay': args.fixup_scale_decay},
             {'params': parameters_others}],
             lr=args.lr,
             momentum=0.9,
