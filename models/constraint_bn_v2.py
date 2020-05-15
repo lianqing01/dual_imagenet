@@ -53,6 +53,25 @@ class Constraint_Norm(nn.Module):
         self.sample_noise=False
         self.noise_data_dependent=False
         self.sample_mean = None
+        self.noise_mu_ = []
+        self.noise_gamma_ = []
+
+    def store_norm_stat(self):
+        self.noise_mu_.append(self.mu_.grad.detach())
+        self.noise_gamma_.append(self.gamma_.grad.detach())
+
+    def summarize_norm_stat(self):
+        import pdb
+        pdb.set_trace()
+        self.noise_mu_ = torch.stack(self.noise_mu_)
+        self.noise_gamma_ = torch.stack(self.noise_gamma_)
+        self.noise_mu_mean = torch.mean(self.noise_mu_, dim=0)
+        self.noise_gamma_mean = torch.mean(self.noise_gamma_, dim=0)
+        self.noise_mu_var = torch.var(self.noise_mu_, dim=0).clamp(min=0)
+        self.noise_mu_std = torch.sqrt(self.noise_mu_var)
+        self.noise_gamma_var = torch.var(self.noise_gamma_, dim=0).clamp(min=0)
+        self.noise_gamma_std = torch.sqrt(self.noise_gamma_var)
+
 
     def get_mean_var(self):
         with torch.no_grad():
@@ -75,10 +94,12 @@ class Constraint_Norm(nn.Module):
         if self.pre_affine:
             if self.sample_noise:
                 if self.noise_data_dependent:
-                    pass
+                    noise_mean = torch.normal(mean=0, std=self.noise_mu_std)
+                    import pdb
+                    pdb.set_trace()
                 else:
                     noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
-                    noise_mean = noise_mean.view(self.mu_.size())
+                noise_mean = noise_mean.view(self.mu_.size())
                 x = x - (self.mu_ + noise_mean)
             else:
                 x = x - self.mu_
@@ -90,10 +111,10 @@ class Constraint_Norm(nn.Module):
         if self.pre_affine:
             if self.sample_noise:
                 if self.noise_data_dependent:
-                    pass
+                    noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
                 else:
                     noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
-                    noise_var = noise_var.view(self.gamma_.size())
+                noise_var = noise_var.view(self.gamma_.size())
                 x = x * (self.gamma_ + noise_var)
             else:
                 x = x * self.gamma_

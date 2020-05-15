@@ -7,6 +7,7 @@
 from __future__ import print_function
 
 import argparse
+from tqdm import tqdm
 import csv
 import os
 from comet_ml import Experiment
@@ -89,7 +90,7 @@ parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
 
 # for adding noise
 parser.add_argument('--sample_noise', default=False, type=str2bool)
-parser.add_argument('--data_dependent', default=True, type=str2bool)
+parser.add_argument('--noise_data_dependent', default=True, type=str2bool)
 parser.add_argument('--noise_std', default=0, type=float)
 
 
@@ -115,7 +116,7 @@ start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 if args.seed != 0:
     torch.manual_seed(args.seed)
 
-args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
+args.log_dir = args.log_dir
 os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
 logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
 
@@ -175,7 +176,6 @@ logger.info('==> Building model..')
 net = models.__dict__[args.model](num_classes=args.num_classes)
 if use_cuda:
     net.cuda()
-    #net = torch.nn.DataParallel(net)
     logger.info(torch.cuda.device_count())
     cudnn.benchmark = True
     logger.info('Using CUDA..')
@@ -245,7 +245,6 @@ if args.resume:
     logger.info('==> Resuming from checkpoint..')
     assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load(args.load_model)
-
     net.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optim'])
     best_acc = checkpoint['acc']
@@ -273,7 +272,7 @@ if args.update_affine_only == True:
 
 if use_cuda:
     device = torch.device("cuda")
-print(args.data_dependent)
+print(args.noise_data_dependent)
 
 def train(epoch):
     logger.info('\nEpoch: %d' % epoch)
@@ -434,6 +433,80 @@ def train(epoch):
             m.reset_norm_statistics()
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 
+def get_norm_stat(epoch):
+    logger.info('\nEpoch: %d' % epoch)
+    net.train()
+    train_loss = AverageMeter(100)
+    acc = AverageMeter(100)
+    batch_time = AverageMeter()
+    reg_loss = AverageMeter(100)
+    train_loss_avg = 0
+    correct = 0
+    total = 0
+    mean = 0
+    var = 0
+    lambda_ = 0
+    xi_ = 0
+
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.reset_norm_statistics()
+
+    for batch_idx, (inputs, targets) in tqdm(enumerate(trainloader)):
+        start = time.time()
+        if use_cuda:
+            inputs, targets = inputs.cuda(), targets.cuda()
+        else:
+            inputs = inputs.to(device)
+            targets = targets.to(device)
+        bsz = inputs.size(0)
+
+
+        outputs = net(inputs)
+        if args.optim_loss == 'mse':
+            targets = targets.float()
+
+
+        # constraint loss
+        weight_mean = 0
+        weight_var = 0
+        weight_mean_abs = 0
+        weight_var_abs = 0
+        for m in net.modules():
+            if isinstance(m, Constraint_Lagrangian):
+                weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
+                weight_mean += weight_mean_
+                weight_var += weight_var_
+                weight_mean_abs += weight_mean_abs_
+                weight_var_abs += weight_var_abs_
+
+        constraint_loss = weight_mean + weight_var
+        #constraint_loss = args.lambda_constraint_weight * constraint_loss
+        weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
+        weight_var_abs = args.lambda_constraint_weight * weight_var_abs
+
+        # optimize constraint loss
+
+        loss = constraint_loss
+
+        optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+        for m in net.modules():
+            if isinstance(m, Constraint_Norm):
+                m.store_norm_stat()
+
+
+
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.summarize_norm_stat()
+            m.reset_norm_statistics()
+    return None
+
+
+
 
 def test(epoch):
     global best_acc
@@ -522,7 +595,7 @@ def test(epoch):
 for m in net.modules():
     if isinstance(m, Constraint_Norm):
         m.sample_noise = args.sample_noise
-        m.data_dependent = args.data_dependent
+        m.noise_data_dependent = args.noise_data_dependent
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
 
@@ -603,6 +676,14 @@ for epoch in range(start_epoch, args.epoch):
 
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
+
+    if epoch == 100:
+        if args.noise_data_dependent:
+            args.sample_noise = True
+            get_norm_stat(epoch)
+            for m in net.modules():
+                if isinstance(m, Constraint_Norm):
+                    m.sample_noise=True
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
