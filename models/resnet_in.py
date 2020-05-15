@@ -2,11 +2,9 @@ import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
 
-from .group_norm import GroupNorm
+from torch.nn import InstanceNorm2d
 
-__all__ = ['resnetgn_50', 'resnetgn_18', 'resnetgn_34']
-
-
+__all__ = ['ResNet', 'resnetin_50', 'resnetin_18', 'resnetin_34']
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -21,12 +19,12 @@ class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = GroupNorm(32, planes)
+        self.bn1 = InstanceNorm2d( planes, affine=True)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=1, bias=False)
-        self.bn2 = GroupNorm(32, planes)
+        self.bn2 = InstanceNorm2d( planes, affine=True)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-        self.bn3 = GroupNorm(32, planes * 4)
+        self.bn3 = InstanceNorm2d( planes * 4, affine=True)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -64,7 +62,7 @@ def conv2d_init(m):
     m.weight.data.normal_(0, math.sqrt(2. / n))
 
 def gn_init(m, zero_init=False):
-    assert isinstance(m, GroupNorm)
+    assert isinstance(m, InstanceNorm2d)
     m.weight.data.fill_(0. if zero_init else 1.)
     m.bias.data.zero_()
 
@@ -76,7 +74,7 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
                                bias=False)
-        self.bn1 = GroupNorm(32, 64)
+        self.bn1 = InstanceNorm2d(64, affine=True)
         self.relu = nn.ReLU(inplace=True)
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -98,10 +96,10 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride, bias=False),
-                GroupNorm(32, planes * block.expansion),
+                InstanceNorm2d( planes * block.expansion, affine=True),
             )
             m = downsample[1]
-            assert isinstance(m, GroupNorm)
+            assert isinstance(m, InstanceNorm2d)
             gn_init(m)
 
         layers = []
@@ -129,7 +127,7 @@ class ResNet(nn.Module):
 
         return x
 
-def resnetgn_18(pretrained=False, progress=True, **kwargs):
+def resnetin_18(pretrained=False, progress=True, **kwargs):
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -137,11 +135,11 @@ def resnetgn_18(pretrained=False, progress=True, **kwargs):
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return ResNet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress,
+    return _resnet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress,
                    **kwargs)
 
 
-def resnetgn_34(pretrained=False, progress=True, **kwargs):
+def resnetin_34(pretrained=False, progress=True, **kwargs):
     r"""ResNet-34 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -149,13 +147,12 @@ def resnetgn_34(pretrained=False, progress=True, **kwargs):
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return ResNet('resnet34', BasicBlock, [3, 4, 6, 3], pretrained, progress,
+    return _resnet('resnet34', BasicBlock, [3, 4, 6, 3], pretrained, progress,
                    **kwargs)
 
 
 
-
-def resnetgn_50(**kwargs):
+def resnetin_50(**kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
 
