@@ -4,7 +4,7 @@ python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v2 \
     --constraint_lr 0.005 \
     --constraint_decay 1 \
     --sample_noise True \
-    --data_dependent False \
+    --noise_data_dependent False \
     --noise_std 0.05 \
     --lambda_constraint_weight 0.001953 \
     --decrease_affine_lr 0.1 \
