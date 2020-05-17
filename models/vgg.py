@@ -15,6 +15,7 @@ cfg = {
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG500': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*500 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 }
 
 
@@ -113,6 +114,10 @@ class VGG(nn.Module):
 
 def vgg16(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn=False)
+
+
+def vgg500(num_classes=10):
+    return VGG('VGG500', num_classes=num_classes, with_bn=False)
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
