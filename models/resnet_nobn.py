@@ -6,6 +6,7 @@ from torchvision.models.utils import load_state_dict_from_url
 
 
 __all__ = ['ResNet', 'resnet_nobn18', 'resnet_nobn34', 'resnet_nobn50', 'resnet_nobn101',
+           'resnet_nobn260',
            'resnet_nobn152', 'resnext50_32x4d', 'resnext101_32x8d',
            'wide_resnet50_2', 'wide_resnet101_2']
 
@@ -266,6 +267,18 @@ def resnet_nobn152(pretrained=False, progress=True, **kwargs):
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return _resnet('resnet152', Bottleneck, [3, 8, 36, 3], pretrained, progress,
+                   **kwargs)
+
+
+def resnet_nobn260(pretrained=False, progress=True, **kwargs):
+    r"""ResNet-152 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
+
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet('resnet260', Bottleneck, [3, 8, 72, 3], pretrained, progress,
                    **kwargs)
 
 

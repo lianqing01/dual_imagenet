@@ -61,8 +61,6 @@ class Constraint_Norm(nn.Module):
         self.noise_gamma_.append(self.gamma_.grad.detach())
 
     def summarize_norm_stat(self):
-        import pdb
-        pdb.set_trace()
         self.noise_mu_ = torch.stack(self.noise_mu_)
         self.noise_gamma_ = torch.stack(self.noise_gamma_)
         self.noise_mu_mean = torch.mean(self.noise_mu_, dim=0)
@@ -95,8 +93,6 @@ class Constraint_Norm(nn.Module):
             if self.sample_noise:
                 if self.noise_data_dependent:
                     noise_mean = torch.normal(mean=0, std=self.noise_mu_std)
-                    import pdb
-                    pdb.set_trace()
                 else:
                     noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
                 noise_mean = noise_mean.view(self.mu_.size())

@@ -80,6 +80,14 @@ class VGG(nn.Module):
                                    #Constraint_Affine2d(in_channels),
                                    nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                    nn.ReLU(inplace=True)]
+                elif with_bn == 'constraint_bn_v3':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                Constraint_Norm2d(x),
+                                nn.ReLU(inplace=True)]
+                elif with_bn =='gn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                nn.GroupNorm(64, x, affine=True),
+                               nn.ReLU(inplace=True)]
                 elif with_bn == 'constraint_bn_v2_no_affine':
                     if idx == 0:
                         layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
@@ -89,13 +97,10 @@ class VGG(nn.Module):
                                    #Constraint_Affine2d(in_channels),
                                    nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                    nn.ReLU(inplace=True)]
-                elif with_bn =='gn':
-                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                                nn.GroupNorm(8, x),
-                               nn.ReLU(inplace=True)]
+
                 elif with_bn == 'in':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                               InstanceNorm2d(x),
+                               InstanceNorm2d(x, affine=True),
                                nn.ReLU(inplace=True),]
 
                 else:
@@ -135,6 +140,8 @@ def vgg16_constraint_bn_v2(num_classes=10):
 
 def vgg16_constraint_bn_v3(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v3')
+
+
 
 
 def vgg16_constraint_bn_v2_noaffine(num_classes=10):
