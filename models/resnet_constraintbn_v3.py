@@ -4,11 +4,10 @@ import torch.nn as nn
 from torchvision.models.utils import load_state_dict_from_url
 
 
-
-__all__ = ['ResNet', 'resnet_nobn18', 'resnet_nobn34', 'resnet_nobn50', 'resnet_nobn101',
-           'resnet_nobn260',
-           'resnet_nobn152', 'resnext50_32x4d', 'resnext101_32x8d',
-           'wide_resnet50_2', 'wide_resnet101_2']
+from .constraint_bn_v2 import *
+__all__ = ['resnet_constraint_v3_18', 'resnet_constraint_v3_34', 'resnet_constraint_v3_50', 'resnet_constraint_v3_101',
+           'resnet_constraint_v3_152', 'resnext50_32x4d', 'resnext101_32x8d',
+           'wide_resnet_constraint_v3_50_2', 'wide_resnet_constraint_v3_101_2']
 
 
 model_urls = {
@@ -27,12 +26,12 @@ model_urls = {
 def conv3x3(in_planes, out_planes, stride=1, groups=1, dilation=1):
     """3x3 convolution with padding"""
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
-                     padding=dilation, groups=groups, bias=False, dilation=dilation)
+                     padding=dilation, groups=groups, bias=True, dilation=dilation)
 
 
 def conv1x1(in_planes, out_planes, stride=1):
     """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=True)
 
 
 class BasicBlock(nn.Module):
@@ -42,15 +41,17 @@ class BasicBlock(nn.Module):
                  base_width=64, dilation=1, norm_layer=None):
         super(BasicBlock, self).__init__()
         if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+            norm_layer = Constraint_Norm2d
         if groups != 1 or base_width != 64:
             raise ValueError('BasicBlock only supports groups=1 and base_width=64')
         if dilation > 1:
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = norm_layer(planes, pre_affine=True, post_affine=True)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
+        self.bn2 = norm_layer(planes, pre_affine=True, post_affine=True)
         self.downsample = downsample
         self.stride = stride
 
@@ -58,9 +59,12 @@ class BasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
+
+        out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
+        out = self.bn2(out)
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -84,12 +88,15 @@ class Bottleneck(nn.Module):
                  base_width=64, dilation=1, norm_layer=None):
         super(Bottleneck, self).__init__()
         if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+            norm_layer = Constraint_Norm2d
         width = int(planes * (base_width / 64.)) * groups
         # Both self.conv2 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv1x1(inplanes, width)
+        self.bn1 = norm_layer(width, pre_affine=True, post_affine=True)
         self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        self.bn2 = norm_layer(width, pre_affine=True, post_affine=True)
         self.conv3 = conv1x1(width, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion, pre_affine=True, post_affine=True)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -98,15 +105,21 @@ class Bottleneck(nn.Module):
         identity = x
 
         out = self.conv1(x)
+
+        out = self.bn1(out)
         out = self.relu(out)
 
         out = self.conv2(out)
+
+        out = self.bn2(out)
         out = self.relu(out)
 
         out = self.conv3(out)
 
+        out = self.bn3(out)
         if self.downsample is not None:
             identity = self.downsample(x)
+
 
         out += identity
         out = self.relu(out)
@@ -121,7 +134,7 @@ class ResNet(nn.Module):
                  norm_layer=None):
         super(ResNet, self).__init__()
         if norm_layer is None:
-            norm_layer = nn.BatchNorm2d
+            norm_layer = Constraint_Norm2d
         self._norm_layer = norm_layer
 
         self.inplanes = 64
@@ -137,6 +150,7 @@ class ResNet(nn.Module):
         self.base_width = width_per_group
         self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1,
                                bias=True)
+        self.bn1 = norm_layer(self.inplanes, pre_affine=True, post_affine=True)
         self.relu = nn.ReLU(inplace=True)
         #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -167,6 +181,7 @@ class ResNet(nn.Module):
         if stride != 1 or self.inplanes != planes * block.expansion:
             downsample = nn.Sequential(
                 conv1x1(self.inplanes, planes * block.expansion, stride),
+                norm_layer(planes * block.expansion, pre_affine=True, post_affine=True),
             )
 
         layers = []
@@ -183,6 +198,8 @@ class ResNet(nn.Module):
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
+
+        x = self.bn1(x)
         x = self.relu(x)
         #x = self.maxpool(x)
 
@@ -210,7 +227,7 @@ def _resnet(arch, block, layers, pretrained, progress, **kwargs):
     return model
 
 
-def resnet_nobn18(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_v3_18(pretrained=False, progress=True, **kwargs):
     r"""ResNet-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -222,7 +239,7 @@ def resnet_nobn18(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_nobn34(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_v3_34(pretrained=False, progress=True, **kwargs):
     r"""ResNet-34 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -234,7 +251,7 @@ def resnet_nobn34(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_nobn50(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_v3_50(pretrained=False, progress=True, **kwargs):
     r"""ResNet-50 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -246,7 +263,7 @@ def resnet_nobn50(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_nobn101(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_v3_101(pretrained=False, progress=True, **kwargs):
     r"""ResNet-101 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -258,7 +275,7 @@ def resnet_nobn101(pretrained=False, progress=True, **kwargs):
                    **kwargs)
 
 
-def resnet_nobn152(pretrained=False, progress=True, **kwargs):
+def resnet_constraint_v3_152(pretrained=False, progress=True, **kwargs):
     r"""ResNet-152 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
@@ -267,18 +284,6 @@ def resnet_nobn152(pretrained=False, progress=True, **kwargs):
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     return _resnet('resnet152', Bottleneck, [3, 8, 36, 3], pretrained, progress,
-                   **kwargs)
-
-
-def resnet_nobn260(pretrained=False, progress=True, **kwargs):
-    r"""ResNet-152 model from
-    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _resnet('resnet260', Bottleneck, [3, 16, 72, 3], pretrained, progress,
                    **kwargs)
 
 
@@ -310,7 +315,7 @@ def resnext101_32x8d(pretrained=False, progress=True, **kwargs):
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet50_2(pretrained=False, progress=True, **kwargs):
+def wide_resnet_constraint_v3_50_2(pretrained=False, progress=True, **kwargs):
     r"""Wide ResNet-50-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
@@ -328,7 +333,7 @@ def wide_resnet50_2(pretrained=False, progress=True, **kwargs):
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet101_2(pretrained=False, progress=True, **kwargs):
+def wide_resnet_constraint_v3_101_2(pretrained=False, progress=True, **kwargs):
     r"""Wide ResNet-101-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
