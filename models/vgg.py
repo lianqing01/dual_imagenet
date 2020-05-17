@@ -118,6 +118,8 @@ def vgg16(num_classes=10):
 
 def vgg500(num_classes=10):
     return VGG('VGG500', num_classes=num_classes, with_bn=False)
+def vgg500_bn(num_classes=10):
+    return VGG('VGG500', num_classes=num_classes, with_bn='bn')
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
