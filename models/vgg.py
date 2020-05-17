@@ -16,6 +16,9 @@ cfg = {
     'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
     'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
     'VGG500': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*500 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG50': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*50 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG25': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*25 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+
 }
 
 
@@ -118,8 +121,24 @@ def vgg16(num_classes=10):
 
 def vgg500(num_classes=10):
     return VGG('VGG500', num_classes=num_classes, with_bn=False)
+
+
+def vgg50(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn=False)
+def vgg25(num_classes=10):
+    return VGG('VGG25', num_classes=num_classes, with_bn=False)
+
+
 def vgg500_bn(num_classes=10):
     return VGG('VGG500', num_classes=num_classes, with_bn='bn')
+def vgg50_bn(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn='bn')
+
+def vgg50_constraint_bn_v2(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn='constraint_bn_v2')
+
+def vgg25_constraint_bn_v2(num_classes=10):
+    return VGG('VGG25', num_classes=num_classes, with_bn='constraint_bn_v2')
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')

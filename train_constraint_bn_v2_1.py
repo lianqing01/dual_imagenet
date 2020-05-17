@@ -62,7 +62,7 @@ parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=3)
+parser.add_argument('--grad_clip', default=1)
 parser.add_argument('--optim_loss', default="cross_entropy")
 parser.add_argument('--num_classes', default=10, type=int)
 parser.add_argument('--print_freq', default=10, type=int)
@@ -90,7 +90,7 @@ parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
 
 # for adding noise
 parser.add_argument('--sample_noise', default=False, type=str2bool)
-parser.add_argument('--noise_data_dependent', default=True, type=str2bool)
+parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
 parser.add_argument('--noise_std', default=0, type=float)
 
 
@@ -410,8 +410,8 @@ def train(epoch):
                 if isinstance(m, Constraint_Lagrangian):
                     lambda_.append(m.lambda_.data.abs().mean())
                     xi_.append(m.xi_.data.abs().mean())
-            lambda_ = torch.mean(torch.stack(lambda_))
-            xi_ = torch.mean(torch.stack(xi_))
+            lambda_ = torch.max(torch.stack(lambda_))
+            xi_ = torch.max(torch.stack(xi_))
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_xi_", xi_.item(), curr_idx)
 
