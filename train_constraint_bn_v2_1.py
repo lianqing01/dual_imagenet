@@ -492,7 +492,7 @@ def get_norm_stat(epoch):
 
         optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+        #torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         for m in net.modules():
             if isinstance(m, Constraint_Norm):
                 m.store_norm_stat()
@@ -503,6 +503,7 @@ def get_norm_stat(epoch):
         if isinstance(m, Constraint_Norm):
             m.summarize_norm_stat()
             m.reset_norm_statistics()
+    optimizer.zero_grad()
     return None
 
 
@@ -677,7 +678,7 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
-    if epoch == 100:
+    if epoch%10 == 0:
         if args.noise_data_dependent:
             args.sample_noise = True
             get_norm_stat(epoch)

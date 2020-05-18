@@ -57,18 +57,21 @@ class Constraint_Norm(nn.Module):
         self.noise_gamma_ = []
 
     def store_norm_stat(self):
-        self.noise_mu_.append(self.mu_.grad.detach())
-        self.noise_gamma_.append(self.gamma_.grad.detach())
+        self.noise_mu_.append(self.mu_.grad.clone().detach())
+        self.noise_gamma_.append(self.gamma_.grad.clone().detach())
 
     def summarize_norm_stat(self):
         self.noise_mu_ = torch.stack(self.noise_mu_)
         self.noise_gamma_ = torch.stack(self.noise_gamma_)
+        self.noise_gamma_ = self.gamma_ - self.noise_gamma_
         self.noise_mu_mean = torch.mean(self.noise_mu_, dim=0)
         self.noise_gamma_mean = torch.mean(self.noise_gamma_, dim=0)
         self.noise_mu_var = torch.var(self.noise_mu_, dim=0).clamp(min=0)
         self.noise_mu_std = torch.sqrt(self.noise_mu_var)
-        self.noise_gamma_var = torch.var(self.noise_gamma_, dim=0).clamp(min=0)
+        self.noise_gamma_var = torch.var(1 / self.noise_gamma_, dim=0).clamp(min=0)
         self.noise_gamma_std = torch.sqrt(self.noise_gamma_var)
+        self.noise_mu_ = []
+        self.noise_gamma_ = []
 
 
     def get_mean_var(self):
@@ -108,10 +111,11 @@ class Constraint_Norm(nn.Module):
             if self.sample_noise:
                 if self.noise_data_dependent:
                     noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
+                    x = x * 1/(1/(self.gamma_ + 1e-5) + noise_var.detach() + 1e-5)
                 else:
                     noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
-                noise_var = noise_var.view(self.gamma_.size())
-                x = x * (self.gamma_ + noise_var)
+                    noise_var = noise_var.view(self.gamma_.size())
+                    x = x * (self.gamma_ + noise_var)
             else:
                 x = x * self.gamma_
             var = self.lagrangian.get_weighted_var(x, self.norm_dim)
