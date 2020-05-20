@@ -70,10 +70,10 @@ class Constraint_Norm(nn.Module):
         self.noise_mu_mean = torch.mean(self.noise_mu_, dim=0)
         self.noise_gamma_mean = torch.mean(self.noise_gamma_, dim=0)
         self.noise_mu_var = torch.var(self.noise_mu_, dim=0).clamp(min=0)
-        self.noise_mu_std = torch.sqrt(self.noise_mu_var)
+        self.noise_mu_std = torch.sqrt(self.noise_mu_var) * 10
         #self.noise_gamma_var = torch.var(1 / (self.noise_gamma_**2+1e-5), dim=0).clamp(min=0)
         self.noise_gamma_var = torch.var(self.noise_gamma_**2, dim=0).clamp(min=0)
-        self.noise_gamma_std = torch.sqrt(self.noise_gamma_var)
+        self.noise_gamma_std = torch.sqrt(self.noise_gamma_var) * 10
 
 
 

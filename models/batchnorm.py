@@ -109,8 +109,8 @@ class _BatchNorm(_NormBase):
                 input_shape = input.size()
                 bsz = input.size(0)
                 input = input.view([input.size(0), self.num_features, -1])
-                mean = input.detach().mean([0,2])
-                var = ((input.detach())**2).mean([0,2]) - mean**2
+                mean = input.mean([0,2])
+                var = (input**2).mean([0,2]) - mean**2
                 unbiased_mean = mean.clone()
                 unbiased_var = var.clone () * (bsz/float(bsz - 1))
                 std = torch.sqrt(var)
