@@ -482,17 +482,19 @@ def get_norm_stat(epoch):
                 weight_var_abs += weight_var_abs_
 
         constraint_loss = weight_mean + weight_var
-        #constraint_loss = args.lambda_constraint_weight * constraint_loss
+        constraint_loss = args.lambda_constraint_weight * constraint_loss
         weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
         weight_var_abs = args.lambda_constraint_weight * weight_var_abs
 
         # optimize constraint loss
+        loss = criterion(outputs, targets)
 
-        loss = constraint_loss
+        loss += constraint_loss
+        loss *= args.lr
 
         optimizer.zero_grad()
         loss.backward()
-        #torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
+        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         for m in net.modules():
             if isinstance(m, Constraint_Norm):
                 m.store_norm_stat()
@@ -678,7 +680,7 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
-    if epoch%10 == 0:
+    if epoch % 1 == 0:
         if args.noise_data_dependent:
             args.sample_noise = True
             get_norm_stat(epoch)

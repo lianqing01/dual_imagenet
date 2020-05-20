@@ -62,14 +62,21 @@ class Constraint_Norm(nn.Module):
 
     def summarize_norm_stat(self):
         self.noise_mu_ = torch.stack(self.noise_mu_)
+        self.noise_mu_ = self.mu_.detach() - self.noise_mu_
         self.noise_gamma_ = torch.stack(self.noise_gamma_)
-        self.noise_gamma_ = self.gamma_ - self.noise_gamma_
+        self.noise_gamma_ = self.gamma_.detach() - self.noise_gamma_
+
+
         self.noise_mu_mean = torch.mean(self.noise_mu_, dim=0)
         self.noise_gamma_mean = torch.mean(self.noise_gamma_, dim=0)
         self.noise_mu_var = torch.var(self.noise_mu_, dim=0).clamp(min=0)
         self.noise_mu_std = torch.sqrt(self.noise_mu_var)
-        self.noise_gamma_var = torch.var(1 / self.noise_gamma_, dim=0).clamp(min=0)
+        #self.noise_gamma_var = torch.var(1 / (self.noise_gamma_**2+1e-5), dim=0).clamp(min=0)
+        self.noise_gamma_var = torch.var(self.noise_gamma_**2, dim=0).clamp(min=0)
         self.noise_gamma_std = torch.sqrt(self.noise_gamma_var)
+
+
+
         self.noise_mu_ = []
         self.noise_gamma_ = []
 
@@ -99,7 +106,7 @@ class Constraint_Norm(nn.Module):
                 else:
                     noise_mean = torch.normal(mean=self.sample_mean, std=self.noise_std)
                 noise_mean = noise_mean.view(self.mu_.size())
-                x = x - (self.mu_ + noise_mean)
+                x = x - (self.mu_ + noise_mean.detach())
             else:
                 x = x - self.mu_
             mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
@@ -111,7 +118,7 @@ class Constraint_Norm(nn.Module):
             if self.sample_noise:
                 if self.noise_data_dependent:
                     noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
-                    x = x * 1/(1/(self.gamma_ + 1e-5) + noise_var.detach() + 1e-5)
+                    x = x * (self.gamma_ + torch.sign(noise_var.detach()) * torch.sqrt(noise_var.abs()).detach())
                 else:
                     noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)
                     noise_var = noise_var.view(self.gamma_.size())
