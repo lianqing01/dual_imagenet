@@ -40,7 +40,7 @@ def str2bool(v):
         elif v.lower() in ('no', 'false', 'f', 'n', '0'):
             return False
         else:
-            raise argparse.ArgumentTypeError('Boolean value expected.')
+            return v
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -81,6 +81,14 @@ parser.add_argument('--project_name', default="dual_bn_v2", type=str)
 parser.add_argument('--dataset', default='CIFAR10', type=str)
 
 parser.add_argument('--print_freq', default=10, type=int)
+
+# for noise
+parser.add_argument('--sample_mean_mean', default=0, type=float)
+parser.add_argument('--sample_mean_var', default=0, type=float)
+parser.add_argument('--sample_std_mean', default=0, type=float)
+parser.add_argument('--sample_std_var', default=0, type=float)
+parser.add_argument('--after_x', default="version_1", type=str)
+
 
 
 args = parser.parse_args()
@@ -412,6 +420,12 @@ for m in net.modules():
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
+        m.sample_mean_mean = torch.zeros(m.num_features).fill_(args.sample_mean_mean).to(device)
+        m.sample_mean_var = torch.zeros(m.num_features).fill_(args.sample_mean_var).to(device)
+        m.sample_std_mean = torch.Tensor([args.sample_std_mean])[0].to(device)
+        m.sample_std_var = torch.Tensor([args.sample_std_var])[0].to(device)
+        m.after_x = args.after_x
+
         m.r_max = args.r_max
         m.batch_renorm = args.batch_renorm
 
