@@ -163,25 +163,10 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=4)
 
 
-# Model
-if args.resume:
-    # Load checkpoint.
-    logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
-    checkpoint = torch.load(args.load_model)
-    net = checkpoint['net']
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
-else:
-    logger.info('==> Building model..')
-    net = models.__dict__[args.model](num_classes=num_classes)
+net = models.__dict__[args.model](num_classes=num_classes)
 
-
-logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
-           + str(args.seed) + '.csv')
-
-tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
-
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
+                      weight_decay=args.decay)
 if use_cuda:
     net.cuda()
     #net = torch.nn.DataParallel(net)
@@ -192,12 +177,29 @@ else:
     device = xm.xla_device(2)
     net = net.to(device)
     logger.info("xla")
+# Model
+if args.resume:
+    # Load checkpoint.
+    logger.info('==> Resuming from checkpoint..')
+    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
+    checkpoint = torch.load(args.load_model)
+    net.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optim'])
+    best_acc = checkpoint['acc']
+    start_epoch = checkpoint['epoch'] + 1
+
+else:
+    logger.info('==> Building model..')
+
+
+logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
+           + str(args.seed) + '.csv')
+
+tb_logger = SummaryWriter(log_dir="results/{}".format(args.log_dir))
 
 criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
 #wandb.watch(net)
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
 
 if args.fixup:
     parameters_bias = [p[1] for p in net.named_parameters() if 'bias' in p[0]]
