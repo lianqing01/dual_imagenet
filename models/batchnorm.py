@@ -160,7 +160,7 @@ class _BatchNorm(_NormBase):
                             var = var + noise_var.detach()
                         elif self.data_dependent != "after_x":
                             noise_var = var + noise_var
-                            noise_var = torch.clamp(min=0)
+                            noise_var = torch.clamp(noise_var, min=0)
                 if self.data_dependent == "after_x":
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)))
                     # add noise
