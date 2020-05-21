@@ -163,20 +163,6 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=4)
 
 
-net = models.__dict__[args.model](num_classes=num_classes)
-
-optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
-                      weight_decay=args.decay)
-if use_cuda:
-    net.cuda()
-    #net = torch.nn.DataParallel(net)
-    logger.info(torch.cuda.device_count())
-    cudnn.benchmark = True
-    logger.info('Using CUDA..')
-else:
-    device = xm.xla_device(2)
-    net = net.to(device)
-    logger.info("xla")
 # Model
 if args.resume:
     # Load checkpoint.
@@ -190,7 +176,18 @@ if args.resume:
 
 else:
     logger.info('==> Building model..')
+    net = models.__dict__[args.model](num_classes=num_classes)
 
+if use_cuda:
+    net.cuda()
+    #net = torch.nn.DataParallel(net)
+    logger.info(torch.cuda.device_count())
+    cudnn.benchmark = True
+    logger.info('Using CUDA..')
+else:
+    device = xm.xla_device()
+    net = net.to(device)
+    logger.info("xla")
 
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')
@@ -201,6 +198,8 @@ criterion = nn.CrossEntropyLoss()
 logger.info(args.lr)
 #wandb.watch(net)
 
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
+                      weight_decay=args.decay)
 if args.fixup:
     parameters_bias = [p[1] for p in net.named_parameters() if 'bias' in p[0]]
     parameters_scale = [p[1] for p in net.named_parameters() if 'scale' in p[0]]
