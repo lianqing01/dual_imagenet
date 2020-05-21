@@ -81,6 +81,12 @@ class Constraint_Norm(nn.Module):
 
         self.noise_mu_ = []
         self.noise_gamma_ = []
+    def add_grad_noise_(self):
+        noise_mu = torch.normal(mean=0, std=self.noise_mu_std)
+        noise_gamma = torch.normal(mean=0, std=self.noise_gamma_std)
+        self.mu_.grad += noise_mu
+        self.gamma_.grad += noise_gamma
+
 
 
     def get_mean_var(self):

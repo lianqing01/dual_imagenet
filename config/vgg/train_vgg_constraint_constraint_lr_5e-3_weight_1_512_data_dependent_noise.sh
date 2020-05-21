@@ -8,6 +8,7 @@ python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v2 \
     --resume \
     --load_model results/vgg/vgg16_constraint_bsz_128_lr_5e-3_weight_1_512_data_dependent_scratch/epoch_99.pth\
     --noise_std 0.01 \
+    --get_norm_freq 100 \
     --lambda_constraint_weight 0.001953 \
     --decrease_affine_lr 0.1 \
 

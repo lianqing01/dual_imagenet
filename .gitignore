@@ -9,5 +9,9 @@ data/*
 checkpoint/*
 old_cache/*
 old_results/*
+figures/*
+*jpg
+*tar
+*pth
 old_res*
 *pyc
