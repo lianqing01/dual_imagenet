@@ -62,8 +62,10 @@ class Constraint_Norm(nn.Module):
 
     def summarize_norm_stat(self):
         self.noise_mu_ = torch.stack(self.noise_mu_)
+        self.noise_mu_sum = self.noise_mu_.clone()
         self.noise_mu_ = self.mu_.detach() - self.noise_mu_
         self.noise_gamma_ = torch.stack(self.noise_gamma_)
+        self.nosie_gamma_sum = self.noise_gamma_.clone()
         self.noise_gamma_ = self.gamma_.detach() - self.noise_gamma_
 
 
@@ -79,6 +81,12 @@ class Constraint_Norm(nn.Module):
 
         self.noise_mu_ = []
         self.noise_gamma_ = []
+    def add_grad_noise_(self):
+        noise_mu = torch.normal(mean=0, std=self.noise_mu_std)
+        noise_gamma = torch.normal(mean=0, std=self.noise_gamma_std)
+        self.mu_.grad += noise_mu
+        self.gamma_.grad += noise_gamma
+
 
 
     def get_mean_var(self):
@@ -118,6 +126,9 @@ class Constraint_Norm(nn.Module):
             if self.sample_noise:
                 if self.noise_data_dependent:
                     noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
+                    #noise_var = (self.gamma_ + noise_var) **2 / self.gamma_**2
+                    noise_var = noise_var.clamp(min=0)
+                    #x = x * self.gamma_ * noise_var.detach()
                     x = x * (self.gamma_ + torch.sign(noise_var.detach()) * torch.sqrt(noise_var.abs()).detach())
                 else:
                     noise_var = torch.normal(mean=self.sample_mean, std=self.noise_std)

@@ -97,6 +97,8 @@ parser.add_argument('--noise_std', default=0, type=float)
 
 # dataset
 parser.add_argument('--dataset', default='CIFAR10', type=str)
+parser.add_argument('--add_grad_noise', default=False, type=str2bool)
+parser.add_argument('--get_norm_freq', default=1, type=int)
 
 
 
@@ -343,6 +345,10 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
+        if args.add_grad_noise == True:
+            for m in net.modules():
+                if isinstance(m, Constraint_Norm):
+                    m.add_grad_noise_()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         if use_cuda:
             optimizer.step()
@@ -601,6 +607,7 @@ for m in net.modules():
         m.noise_data_dependent = args.noise_data_dependent
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
         m.sample_mean = torch.zeros(m.num_features).to(device)
+        m.add_grad_noise = args.add_grad_noise
 
 def checkpoint(acc, epoch):
     # Save checkpoint.
@@ -680,7 +687,7 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
-    if epoch % 1 == 0:
+    if epoch % args.get_norm_freq == 0:
         if args.noise_data_dependent:
             args.sample_noise = True
             get_norm_stat(epoch)
