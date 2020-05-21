@@ -245,7 +245,6 @@ constraint_optimizer = (optim.SGD(
 if args.resume:
     # Load checkpoint.
     logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load(args.load_model)
     net.load_state_dict(checkpoint['state_dict'])
     optimizer.load_state_dict(checkpoint['optim'])
@@ -454,9 +453,6 @@ def get_norm_stat(epoch):
     lambda_ = 0
     xi_ = 0
 
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
-            m.reset_norm_statistics()
 
     for batch_idx, (inputs, targets) in tqdm(enumerate(trainloader)):
         start = time.time()
@@ -507,10 +503,6 @@ def get_norm_stat(epoch):
 
 
 
-    for m in net.modules():
-        if isinstance(m, Constraint_Norm):
-            m.summarize_norm_stat()
-            m.reset_norm_statistics()
     optimizer.zero_grad()
     return None
 
@@ -690,10 +682,19 @@ for epoch in range(start_epoch, args.epoch):
     if epoch % args.get_norm_freq == 0:
         if args.noise_data_dependent:
             args.sample_noise = True
-            get_norm_stat(epoch)
+            for i in range(5):
+                get_norm_stat(epoch)
+
+            for m in net.modules():
+                if isinstance(m, Constraint_Norm):
+                    if epoch<=100:
+                        m.summarize_norm_stat()
+                    m.reset_norm_statistics()
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     m.sample_noise=True
+    import pdb
+    pdb.set_trace()
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:

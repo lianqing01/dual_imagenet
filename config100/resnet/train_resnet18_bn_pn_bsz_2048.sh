@@ -3,4 +3,5 @@ python train_pn.py --model resnet18 \
     --batch-size 128 \
     --pn-batch-size 2048 \
     --lr 0.1 \
+    --dataset CIFAR100 \
     --project_name dual_bn_100
