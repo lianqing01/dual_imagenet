@@ -687,6 +687,8 @@ for epoch in range(start_epoch, args.epoch):
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     m.sample_noise=True
+    import pdb
+    pdb.set_trace()
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:

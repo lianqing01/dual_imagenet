@@ -62,8 +62,10 @@ class Constraint_Norm(nn.Module):
 
     def summarize_norm_stat(self):
         self.noise_mu_ = torch.stack(self.noise_mu_)
+        self.noise_mu_sum = self.noise_mu_.clone()
         self.noise_mu_ = self.mu_.detach() - self.noise_mu_
         self.noise_gamma_ = torch.stack(self.noise_gamma_)
+        self.nosie_gamma_sum = self.noise_gamma_.clone()
         self.noise_gamma_ = self.gamma_.detach() - self.noise_gamma_
 
 
