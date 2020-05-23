@@ -111,7 +111,7 @@ class Constraint_Norm(nn.Module):
         self.pre_mean = x.mean(self.norm_dim)
         self.pre_var = (x*x).mean(self.norm_dim)
         if self.pre_affine:
-            if self.sample_noise:
+            if self.sample_noise and self.training:
                 if self.noise_data_dependent:
                     noise_mean = torch.normal(mean=0, std=self.noise_mu_std)
                 else:
@@ -126,7 +126,7 @@ class Constraint_Norm(nn.Module):
         self.mean += mean.detach()
         # var
         if self.pre_affine:
-            if self.sample_noise:
+            if self.sample_noise and self.training:
                 if self.noise_data_dependent:
                     noise_var = torch.normal(mean=0, std=self.noise_gamma_std)
                     #noise_var = (self.gamma_ + noise_var) **2 / self.gamma_**2
@@ -145,14 +145,15 @@ class Constraint_Norm(nn.Module):
         self.var += var.detach()
 
         self.tracking_times += 1
-        self.summarize_x_hat.append(x.detach())
-        if self.add_noise == "after_x":
-            noise_mean = torch.normal(mean=self.sample_mean.fill_(0), std=mean.abs() * self.sample_mean_std)
-            noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=var.abs() * self.sample_var_std)
-            noise_mean = noise_mean.view(self.mu_.size()).clamp(min=-1, max=1)
-            noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
-            x = x * noise_var + noise_mean
-        self.summarize_x_hat_noise.append(x.detach())
+        #self.summarize_x_hat.append(x.detach())
+        if self.training == True:
+            if self.add_noise == "after_x":
+                noise_mean = torch.normal(mean=self.sample_mean.fill_(0), std=mean.abs() * self.sample_mean_std)
+                noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=var.abs() * self.sample_var_std)
+                noise_mean = noise_mean.view(self.mu_.size()).clamp(min=-1, max=1)
+                noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
+                x = x * noise_var + noise_mean
+            #self.summarize_x_hat_noise.append(x.detach())
         if self.post_affine != False:
             x = self.post_affine_layer(x)
         return x

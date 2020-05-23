@@ -251,9 +251,6 @@ if args.resume:
     logger.info('==> Resuming from checkpoint..')
     checkpoint = torch.load(args.load_model)
     net.load_state_dict(checkpoint['state_dict'])
-    optimizer.load_state_dict(checkpoint['optim'])
-    best_acc = checkpoint['acc']
-    start_epoch = checkpoint['epoch'] + 1
 
 if not os.path.isdir('results/{}'.format(args.log_dir)):
     os.makedirs('results/{}'.format(args.log_dir))
@@ -346,17 +343,6 @@ def train(epoch):
         correct += correct_idx
         acc.update(100. * correct_idx / float(targets.size(0)))
 
-        optimizer.zero_grad()
-        loss.backward()
-        if args.add_grad_noise == True:
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    m.add_grad_noise_()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        if use_cuda:
-            optimizer.step()
-        else:
-            xm.optimizer_step(optimizer, barrier=True)
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
         remain_time = remain_iter * batch_time.avg
@@ -702,7 +688,6 @@ for epoch in range(start_epoch, args.epoch):
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     m.sample_noise=True
-    train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
