@@ -423,6 +423,8 @@ def train(epoch):
             xi_ = torch.max(torch.stack(xi_))
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_xi_", xi_.item(), curr_idx)
+    import pdb
+    pdb.set_trace()
 
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
