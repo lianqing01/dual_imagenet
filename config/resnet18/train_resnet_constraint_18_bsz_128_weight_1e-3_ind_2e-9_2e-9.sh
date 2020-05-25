@@ -8,7 +8,7 @@ python train_constraint_bn_v2_1.py --model resnet_constraint18 \
     --lambda_weight_mean 10 \
     --sample_nosie True \
     --noise_data_dependent False \
-    --sample_mean_std 0.09 \
-    --sample_var_std 0.09 \
+    --noise_mean_std 0.09 \
+    --noise_var_std 0.09 \
     --decrease_affine_lr 0.1 
 
