@@ -269,7 +269,8 @@ def train(epoch):
 
 
 
-        outputs = net(inputs)
+        with torch.no_grad():
+            outputs = net(inputs)
         loss = criterion(outputs[:args.batch_size], targets[:args.batch_size])
         train_loss.update(loss.data.item())
         _, predicted = torch.max(outputs[:args.batch_size].data, 1)
@@ -280,12 +281,6 @@ def train(epoch):
         train_loss_avg += loss.item()
 
         optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
-        if use_cuda:
-            optimizer.step()
-        else:
-            xm.optimizer_step(optimizer, barrier=True)
 
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
@@ -308,6 +303,8 @@ def train(epoch):
                     total=total,
                     remain_time=remain_time,
                         ))
+            import pdb
+            pdb.set_trace()
 
         if (batch_idx+1) % args.print_freq == 0:
             curr_idx = epoch * len(trainloader) + batch_idx

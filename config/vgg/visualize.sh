@@ -1,4 +1,4 @@
-python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v2 \
+python train_visualize.py --model vgg16_constraint_bn_v2 \
     --log_dir vgg/visualize \
     --lr 0.1 \
     --constraint_lr 0.005 \

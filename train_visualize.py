@@ -376,6 +376,8 @@ def train(epoch):
                     total=total,
                     remain_time=remain_time,
                         ))
+            import pdb
+            pdb.set_trace()
 
 
         if (batch_idx+1) % args.print_freq == 0:
@@ -409,8 +411,6 @@ def train(epoch):
             xi_ = torch.max(torch.stack(xi_))
             tb_logger.add_scalar("train/constraint_lambda_", lambda_.item(), curr_idx)
             tb_logger.add_scalar("train/constraint_xi_", xi_.item(), curr_idx)
-    import pdb
-    pdb.set_trace()
 
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
@@ -674,6 +674,8 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
+    train_loss, reg_loss, train_acc = train(epoch)
+    test_loss, test_acc = test(epoch)
     if epoch % args.get_norm_freq == 0:
         if args.noise_data_dependent:
             args.sample_noise = True
@@ -688,7 +690,6 @@ for epoch in range(start_epoch, args.epoch):
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     m.sample_noise=True
-    test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
         lr_scheduler.step(test_loss)
     else:

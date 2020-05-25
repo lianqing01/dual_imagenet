@@ -1,5 +1,5 @@
 python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v3 \
-    --log_dir vgg/vgg16_constraint_v3_bsz_128_lr_1e-2_weight_1_512_ind_1e-2_1e-1_time \
+    --log_dir vgg/vgg16_constraint_v3_bsz_128_lr_1e-2_weight_1_512_ind_1e-1_2e-1 \
     --lr 0.1 \
     --constraint_lr 0.01 \
     --constraint_decay 1 \
@@ -7,7 +7,7 @@ python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v3 \
     --decrease_affine_lr 0.1 \
     --noise_data_dependent False \
     --sample_noise True \
-    --noise_mean_std 1e-2 \
-    --noise_var_std 1e-1 \
+    --noise_mean_std 1e-1 \
+    --noise_var_std 2e-1 \
 
 
