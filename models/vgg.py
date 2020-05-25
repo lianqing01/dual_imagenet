@@ -97,7 +97,7 @@ class VGG(nn.Module):
                                    nn.ReLU(inplace=True)]
                 elif with_bn == 'constraint_bn_v3':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                                Constraint_Norm2d(x),
+                                Constraint_Norm2d(x, pre_affine=True, post_affine=True),
                                 nn.ReLU(inplace=True)]
                 elif with_bn =='gn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),

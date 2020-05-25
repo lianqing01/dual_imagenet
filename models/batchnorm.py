@@ -26,6 +26,8 @@ class _NormBase(Module):
         self.noise_bsz = 1000
         self.sample_mean = None
         self.batch_renorm=False
+        self.summarize_x = []
+        self.summarize_x_noise = []
         if self.affine:
             self.weight = Parameter(torch.Tensor(num_features))
             self.bias = Parameter(torch.Tensor(num_features))
@@ -148,8 +150,8 @@ class _BatchNorm(_NormBase):
                             noise_var = torch.normal(mean=0, std=sample_var_std)
 
                         elif self.sample_noise and self.data_dependent is not True:
-                            noise_mean = torch.normal(mean=self.sample_mean_mean, std=self.sample_std_mean)
-                            noise_var = torch.normal(mean=self.sample_mean_var, std=self.sample_std_var)
+                            noise_mean = torch.normal(mean=self.sample_mean_mean.fill_(0), std=self.sample_std_mean)
+                            noise_var = torch.normal(mean=self.sample_mean_var.fill_(1), std=self.sample_std_var)
 
                         # check noise mean and noise var like batch renormalization
                         # for noise mean
@@ -165,11 +167,14 @@ class _BatchNorm(_NormBase):
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)))
                     # add noise
 
+                    #self.summarize_x.append(output.detach())
                     if self.after_x == "version_2":
                         with torch.no_grad():
                             noise_var = (output + noise_var) / output
                             noise_var = noise_var.detach().clamp(min=0, max=10)
-                    output = output * _unsqueeze_ft(noise_var.clamp(min=0)) + _unsqueeze_ft(noise_mean)
+                    output = output * _unsqueeze_ft(noise_var) + _unsqueeze_ft(noise_mean)
+
+                    #self.summarize_x_noise.append(output.detach())
                     output = output * _unsqueeze_ft(self.weight)  + _unsqueeze_ft(self.bias)
                 elif not self.batch_renorm:
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \

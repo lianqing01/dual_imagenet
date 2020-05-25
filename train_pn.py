@@ -164,20 +164,10 @@ testloader = torch.utils.data.DataLoader(testset, batch_size=100,
 
 
 net = models.__dict__[args.model](num_classes=num_classes)
+# Model
 
 optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9,
                       weight_decay=args.decay)
-if use_cuda:
-    net.cuda()
-    #net = torch.nn.DataParallel(net)
-    logger.info(torch.cuda.device_count())
-    cudnn.benchmark = True
-    logger.info('Using CUDA..')
-else:
-    device = xm.xla_device(2)
-    net = net.to(device)
-    logger.info("xla")
-# Model
 if args.resume:
     # Load checkpoint.
     logger.info('==> Resuming from checkpoint..')
@@ -191,6 +181,16 @@ if args.resume:
 else:
     logger.info('==> Building model..')
 
+if use_cuda:
+    net.cuda()
+    #net = torch.nn.DataParallel(net)
+    logger.info(torch.cuda.device_count())
+    cudnn.benchmark = True
+    logger.info('Using CUDA..')
+else:
+    device = xm.xla_device()
+    net = net.to(device)
+    logger.info("xla")
 
 logname = ('results/{}/log_'.format(args.log_dir) + net.__class__.__name__ + '_' + args.name + '_'
            + str(args.seed) + '.csv')

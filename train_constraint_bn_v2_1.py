@@ -92,6 +92,9 @@ parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
 parser.add_argument('--sample_noise', default=False, type=str2bool)
 parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
 parser.add_argument('--noise_std', default=0, type=float)
+parser.add_argument('--lambda_noise_weight', default=1, type=float)
+parser.add_argument('--noise_mean_std', default=0, type=float)
+parser.add_argument('--noise_var_std', default=0, type=float)
 
 
 
@@ -105,6 +108,8 @@ parser.add_argument('--get_norm_freq', default=1, type=int)
 # pretrain
 parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
 parser.add_argument('--max_pretrain_epoch', default=20, type=int)
+parser.add_argument('--add_noise', default=None, type=str)
+parser.add_argument('--lambda_weight_mean', default=1, type=float)
 
 
 args = parser.parse_args()
@@ -324,7 +329,7 @@ def train(epoch):
                 weight_mean_abs += weight_mean_abs_
                 weight_var_abs += weight_var_abs_
 
-        constraint_loss = weight_mean + weight_var
+        constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
         constraint_loss = args.lambda_constraint_weight * constraint_loss
         weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
         weight_var_abs = args.lambda_constraint_weight * weight_var_abs
@@ -437,6 +442,152 @@ def train(epoch):
         if isinstance(m, Constraint_Norm):
             m.reset_norm_statistics()
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
+
+
+def _initialize(epoch):
+    logger.info('\nEpoch: %d' % epoch)
+    net.eval()
+    train_loss = AverageMeter(100)
+    acc = AverageMeter(100)
+    batch_time = AverageMeter()
+    reg_loss = AverageMeter(100)
+    train_loss_avg = 0
+    correct = 0
+    total = 0
+    mean = 0
+    var = 0
+    lambda_ = 0
+    xi_ = 0
+
+    num_norm = 0
+    for m in net.modules():
+        if isinstance(m, Constraint_Norm):
+            m.reset_norm_statistics()
+            num_norm+=1
+    for layer in range(num_norm):
+        for i in range(3):
+            for batch_idx, (inputs, targets) in enumerate(trainloader):
+                if batch_idx>20 * 128/args.batch_size:
+                    break
+                start = time.time()
+                if use_cuda:
+                    inputs, targets = inputs.cuda(), targets.cuda()
+                else:
+                    inputs = inputs.to(device)
+                    targets = targets.to(device)
+                bsz = inputs.size(0)
+
+
+                outputs = net(inputs)
+                if args.optim_loss == 'mse':
+                    targets = targets.float()
+                loss = criterion(outputs, targets)
+
+
+                # constraint loss
+                weight_mean = 0
+                weight_var = 0
+                weight_mean_abs = 0
+                weight_var_abs = 0
+                for m in net.modules():
+                    if isinstance(m, Constraint_Lagrangian):
+                        weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                        weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
+                        weight_mean += weight_mean_
+                        weight_var += weight_var_
+                        weight_mean_abs += weight_mean_abs_
+                        weight_var_abs += weight_var_abs_
+
+                constraint_loss = weight_mean + weight_var
+                constraint_loss = args.lambda_constraint_weight * constraint_loss
+                weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
+                weight_var_abs = args.lambda_constraint_weight * weight_var_abs
+
+                # optimize constraint loss
+
+                train_loss.update(loss.item())
+                train_loss_avg += loss.item()
+                loss += constraint_loss
+
+                # optimize
+                _, predicted = torch.max(outputs.data, 1)
+                total += targets.size(0)
+                correct_idx = predicted.eq(targets.data).cpu().sum().float()
+                correct += correct_idx
+                acc.update(100. * correct_idx / float(targets.size(0)))
+
+                batch_time.update(time.time() - start)
+                remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
+                remain_time = remain_iter * batch_time.avg
+                t_m, t_s = divmod(remain_time, 60)
+                t_h, t_m = divmod(t_m, 60)
+                remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+
+
+                if (batch_idx+1) % args.print_freq == 0:
+                    mean = []
+                    var = []
+                    for m in net.modules():
+                        if isinstance(m, Constraint_Norm):
+                            mean_, var_ = m.get_mean_var()
+                            mean.append(mean_.abs())
+                            var.append(var_.abs())
+                    mean = torch.mean(torch.stack(mean))
+                    var = torch.mean(torch.stack(var))
+                    curr_idx = epoch * len(trainloader) + batch_idx
+
+                    # get the constraint weight
+                    lambda_ = []
+                    xi_ = []
+                    for m in net.modules():
+                        if isinstance(m, Constraint_Lagrangian):
+                            lambda_.append(m.lambda_.data.abs().mean())
+                            xi_.append(m.xi_.data.abs().mean())
+                    lambda_ = torch.max(torch.stack(lambda_))
+                    xi_ = torch.max(torch.stack(xi_))
+
+                if (batch_idx+1) % args.print_freq == 0:
+                    logger.info("Initializing")
+                    logger.info('Train: [{0}][{1}/{2}]\t'
+                            'mean {mean:.4f}\t'
+                            'var {var:.4f}\t'
+                            'remain_time: {remain_time}'.format(
+                            epoch, batch_idx, len(trainloader),
+                            mean = mean,
+                            var = var,
+                            layer=layer,
+                            remain_time=remain_time,
+                            ))
+                    print("layer: {}".format(layer))
+            if i == 0:
+                track_layer = 0
+                for m in net.modules():
+                    if isinstance(m, Constraint_Norm):
+                        if track_layer == layer:
+                            m._initialize_mu()
+                            break
+                        else:
+                            track_layer +=1
+            elif i == 1:
+                track_layer = 0
+                for m in net.modules():
+                    if isinstance(m, Constraint_Norm):
+                        if track_layer == layer:
+                            m._initialize_gamma()
+                            break
+                        else:
+                            track_layer += 1
+
+
+            for m in net.modules():
+                if isinstance(m, Constraint_Norm):
+                    m.reset_norm_statistics()
+
+
+    logger.info("initializing epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
+
+    return (train_loss.avg, reg_loss.avg, 100.*correct/total)
+
 
 def get_norm_stat(epoch):
     logger.info('\nEpoch: %d' % epoch)
@@ -597,10 +748,13 @@ for m in net.modules():
     if isinstance(m, Constraint_Norm):
         m.sample_noise = args.sample_noise
         m.noise_data_dependent = args.noise_data_dependent
-        m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
+        m.noise_std = torch.sqrt(torch.Tensor([args.noise_std])[0].to(device))
         m.sample_mean = torch.zeros(m.num_features).to(device)
         m.add_grad_noise = args.add_grad_noise
-
+        m.lambda_noise_weight = args.lambda_noise_weight
+        m.add_noise = args.add_noise
+        m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+        m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 def checkpoint(acc, epoch):
     # Save checkpoint.
     logger.info('Saving..')
@@ -670,6 +824,8 @@ if torch.__version__ < '1.4.1':
     lr = optimizer.param_groups[0]['lr']
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
+with torch.no_grad():
+    _initialize(0)
 
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
@@ -693,8 +849,6 @@ for epoch in range(start_epoch, args.epoch):
             for m in net.modules():
                 if isinstance(m, Constraint_Norm):
                     m.sample_noise=True
-    import pdb
-    pdb.set_trace()
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:
