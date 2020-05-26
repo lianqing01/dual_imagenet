@@ -824,8 +824,9 @@ if torch.__version__ < '1.4.1':
     lr = optimizer.param_groups[0]['lr']
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
-with torch.no_grad():
-    _initialize(0)
+#if not args.resume:
+#    with torch.no_grad():
+#        _initialize(0)
 
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
