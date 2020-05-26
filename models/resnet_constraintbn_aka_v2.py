@@ -77,10 +77,10 @@ class BasicBlock(nn.Module):
                 )
 
     def forward(self, x):
-        out = F.relu(out)
+        out = F.relu(x)
         out = self.bn1(out)
 
-        out = self.conv1(x)
+        out = self.conv1(out)
         out = F.relu(out)
         out = self.bn2(out)
         out = self.conv2(out)
