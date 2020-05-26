@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import torch.nn.functional as F
 
 
 __all__ = ['ResNet', 'resnet20', 'resnet32', 'resnet44', 'resnet56', 'resnet110', 'resnet1202']
@@ -12,37 +13,47 @@ def conv3x3(in_planes, out_planes, stride=1):
                      padding=1, bias=False)
 
 
+
+class LambdaLayer(nn.Module):
+    def __init__(self, lambd):
+        super(LambdaLayer, self).__init__()
+        self.lambd = lambd
+
+    def forward(self, x):
+        return self.lambd(x)
+
+
 class BasicBlock(nn.Module):
     expansion = 1
 
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
+    def __init__(self, in_planes, planes, stride=1, option='A'):
         super(BasicBlock, self).__init__()
-        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
-        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(planes, planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(planes)
-        self.downsample = downsample
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != planes:
+            if option == 'A':
+                """
+                For CIFAR10 ResNet paper uses option A.
+                """
+                self.shortcut = LambdaLayer(lambda x:
+                                            F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes//4, planes//4), "constant", 0))
+            elif option == 'B':
+                self.shortcut = nn.Sequential(
+                     nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
+                     nn.BatchNorm2d(self.expansion * planes)
+                )
 
     def forward(self, x):
-        identity = x
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        if self.downsample is not None:
-            identity = self.downsample(x)
-            identity = torch.cat((identity, torch.zeros_like(identity)), 1)
-
-        out += identity
-        out = self.relu(out)
-
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out += self.shortcut(x)
+        out = F.relu(out)
         return out
+
 
 
 class ResNet(nn.Module):
@@ -54,7 +65,7 @@ class ResNet(nn.Module):
         self.conv1 = conv3x3(3, 16)
         self.bn1 = nn.BatchNorm2d(16)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, 16, layers[0])
+        self.layer1 = self._make_layer(block, 16, layers[0], stride=1)
         self.layer2 = self._make_layer(block, 32, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
@@ -74,21 +85,15 @@ class ResNet(nn.Module):
             if isinstance(m, BasicBlock):
                 nn.init.constant_(m.bn2.weight, 0)
 
-    def _make_layer(self, block, planes, blocks, stride=1):
-        downsample = None
-        if stride != 1:
-            downsample = nn.Sequential(
-                nn.AvgPool2d(1, stride=stride),
-                nn.BatchNorm2d(self.inplanes),
-            )
-
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
         layers = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes
-        for _ in range(1, blocks):
-            layers.append(block(planes, planes))
+        for stride in strides:
+            layers.append(block(self.inplanes, planes, stride))
+            self.inplanes = planes * block.expansion
 
         return nn.Sequential(*layers)
+
 
     def forward(self, x):
         x = self.conv1(x)
@@ -151,4 +156,4 @@ def resnet1202(**kwargs):
 
     """
     model = ResNet(BasicBlock, [200, 200, 200], **kwargs)
-    return model    
+    return model
