@@ -135,11 +135,11 @@ def resnet_constraint44():
     return resnet_constraint(BasicBlock, [7, 7, 7])
 
 
-def resnet_constraint56():
+def resnet_constraint56(num_classes=10):
     return resnet_constraint(BasicBlock, [9, 9, 9])
 
 
-def resnet_constraint110():
+def resnet_constraint110(num_classes=10):
     return resnet_constraint(BasicBlock, [18, 18, 18])
 
 
