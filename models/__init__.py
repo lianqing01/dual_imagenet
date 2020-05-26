@@ -22,3 +22,4 @@ from .resnet_in import *
 #from .resnet_cifar_constraint_v2 import *
 from .resnet_aka import *
 from .resnet_constraintbn_aka import *
+from .resnet_constraintbn_aka_v2 import *
