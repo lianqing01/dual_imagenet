@@ -17,3 +17,4 @@ from .fixup_resnet_imagenet import *
 from .resnet_brn import *
 from .resnet_gn import *
 from .resnet_in import *
+from .resnet_cifar import *

@@ -11,6 +11,6 @@ python train_constraint_bn_v2_1.py --model resnet_constraint18 \
     --resume \
     --load_model results/resnet/oracle_resnet_constraint_18_bsz_128_ind_2e-1_2e-1/epoch_99.pth 
     --noise_data_dependent False \
-    --noise_mean_std 0.02 \
-    --noise_var_std 0.02 \
+    --noise_mean_std 0.1 \
+    --noise_var_std 0.1 \
 
