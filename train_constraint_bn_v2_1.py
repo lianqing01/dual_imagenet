@@ -467,7 +467,7 @@ def _initialize(epoch):
     for layer in range(num_norm):
         for i in range(3):
             for batch_idx, (inputs, targets) in enumerate(trainloader):
-                if batch_idx>20 * 128/args.batch_size:
+                if batch_idx>10 * 128/args.batch_size:
                     break
                 start = time.time()
                 if use_cuda:
@@ -825,6 +825,8 @@ if torch.__version__ < '1.4.1':
     logger.info("epoch: {}, lr: {}".format(start_epoch, lr))
 
 
+with torch.no_grad():
+    _initialize(0)
 for epoch in range(start_epoch, args.epoch):
     lr = optimizer.param_groups[0]['lr']
     lr1 = optimizer.param_groups[1]['lr']
