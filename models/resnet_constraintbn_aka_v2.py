@@ -1,28 +1,28 @@
 '''
-Properly implemented resnet_constraintv2_-s for CIFAR10 as described in paper [1].
+Properly implemented resnet_constraint-s for CIFAR10 as described in paper [1].
 
 The implementation and structure of this file is hugely influenced by [2]
 which is implemented for ImageNet and doesn't have option A for identity.
 Moreover, most of the implementations on the web is copy-paste from
-torchvision's resnet_constraintv2_ and has wrong number of params.
+torchvision's resnet_constraint and has wrong number of params.
 
-Proper resnet_constraintv2_-s for CIFAR10 (for fair comparision and etc.) has following
+Proper resnet_constraint-s for CIFAR10 (for fair comparision and etc.) has following
 number of layers and parameters:
 
 name      | layers | params
-resnet_constraintv2_20  |    20  | 0.27M
-resnet_constraintv2_32  |    32  | 0.46M
-resnet_constraintv2_44  |    44  | 0.66M
-resnet_constraintv2_56  |    56  | 0.85M
-resnet_constraintv2_110 |   110  |  1.7M
-resnet_constraintv2_1202|  1202  | 19.4m
+resnet_constraint20  |    20  | 0.27M
+resnet_constraint32  |    32  | 0.46M
+resnet_constraint44  |    44  | 0.66M
+resnet_constraint56  |    56  | 0.85M
+resnet_constraint110 |   110  |  1.7M
+resnet_constraint1202|  1202  | 19.4m
 
 which this implementation indeed has.
 
 Reference:
 [1] Kaiming He, Xiangyu Zhang, Shaoqing Ren, Jian Sun
     Deep Residual Learning for Image Recognition. arXiv:1512.03385
-[2] https://github.com/pytorch/vision/blob/master/torchvision/models/resnet_constraintv2_.py
+[2] https://github.com/pytorch/vision/blob/master/torchvision/models/resnet_constraint.py
 
 If you use this implementation in you work, please don't forget to mention the
 author, Yerlan Idelbayev.
@@ -35,7 +35,7 @@ import torch.nn.init as init
 from torch.autograd import Variable
 from .constraint_bn_v2 import *
 
-__all__ = ['resnet_constraintv2_', 'resnet_constraintv2_20', 'resnet_constraintv2_32', 'resnet_constraintv2_44', 'resnet_constraintv2_56', 'resnet_constraintv2_110', 'resnet_constraintv2_1202']
+__all__ = ['resnet_constraint', 'resnet_constraint20', 'resnet_constraint32', 'resnet_constraint44', 'resnet_constraint56', 'resnet_constraint110', 'resnet_constraint1202']
 
 def _weights_init(m):
     classname = m.__class__.__name__
@@ -66,7 +66,7 @@ class BasicBlock(nn.Module):
         if stride != 1 or in_planes != planes:
             if option == 'A':
                 """
-                For CIFAR10 resnet_constraintv2_ paper uses option A.
+                For CIFAR10 resnet_constraint paper uses option A.
                 """
                 self.shortcut = LambdaLayer(lambda x:
                                             F.pad(x[:, :, ::2, ::2], (0, 0, 0, 0, planes//4, planes//4), "constant", 0))
@@ -79,18 +79,17 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         out = F.relu(x)
         out = self.bn1(out)
-
         out = self.conv1(out)
-        out = F.relu(out)
         out = self.bn2(out)
         out = self.conv2(out)
         out += self.shortcut(x)
+        out = F.relu(out)
         return out
 
 
-class resnet_constraintv2_(nn.Module):
+class resnet_constraint(nn.Module):
     def __init__(self, block, num_blocks, num_classes=10):
-        super(resnet_constraintv2_, self).__init__()
+        super(resnet_constraint, self).__init__()
         self.in_planes = 16
 
         self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1, bias=False)
@@ -124,28 +123,28 @@ class resnet_constraintv2_(nn.Module):
         return out
 
 
-def resnet_constraintv2_20(num_classes=10):
-    return resnet_constraintv2_(BasicBlock, [3, 3, 3])
+def resnet_constraint20(num_classes=10):
+    return resnet_constraint(BasicBlock, [3, 3, 3])
 
 
-def resnet_constraintv2_32():
-    return resnet_constraintv2_(BasicBlock, [5, 5, 5])
+def resnet_constraint32():
+    return resnet_constraint(BasicBlock, [5, 5, 5])
 
 
-def resnet_constraintv2_44():
-    return resnet_constraintv2_(BasicBlock, [7, 7, 7])
+def resnet_constraint44():
+    return resnet_constraint(BasicBlock, [7, 7, 7])
 
 
-def resnet_constraintv2_56():
-    return resnet_constraintv2_(BasicBlock, [9, 9, 9])
+def resnet_constraint56(num_classes=10):
+    return resnet_constraint(BasicBlock, [9, 9, 9])
 
 
-def resnet_constraintv2_110():
-    return resnet_constraintv2_(BasicBlock, [18, 18, 18])
+def resnet_constraint110(num_classes=10):
+    return resnet_constraint(BasicBlock, [18, 18, 18])
 
 
-def resnet_constraintv2_1202():
-    return resnet_constraintv2_(BasicBlock, [200, 200, 200])
+def resnet_constraint1202():
+    return resnet_constraint(BasicBlock, [200, 200, 200])
 
 
 def test(net):
@@ -160,7 +159,7 @@ def test(net):
 
 if __name__ == "__main__":
     for net_name in __all__:
-        if net_name.startswith('resnet_constraintv2_'):
+        if net_name.startswith('resnet_constraint'):
             print(net_name)
             test(globals()[net_name]())
             print()
