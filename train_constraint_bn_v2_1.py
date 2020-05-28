@@ -657,6 +657,8 @@ def get_norm_stat(epoch):
     optimizer.zero_grad()
     return None
 
+with torch.no_grad():
+    _initialize(0)
 
 
 
