@@ -5,6 +5,6 @@ python train_constraint_bn_v2_1.py --model resnet_constraint56 \
     --constraint_lr 0.01 \
     --constraint_decay 1 \
     --lambda_constraint_weight 0.005 \
-    --lambda_weight_mean 10 \
+    --lambda_weight_mean 1 \
     --decrease_affine_lr 0.1 \
 
