@@ -3,6 +3,7 @@ import os
 import shutil
 import time
 
+import wandb
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -11,6 +12,7 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
+from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
@@ -76,6 +78,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
+    parser.add_argument('--grad_clip', default=1)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -89,6 +92,7 @@ def parse():
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
     parser.add_argument('--loss-scale', type=str, default=None)
     parser.add_argument('--channels-last', type=bool, default=False)
+    parser.add_argument('--log_dir', default="", type=str)
     args = parser.parse_args()
     return args
 
@@ -96,11 +100,6 @@ def main():
     global best_prec1, args
 
     args = parse()
-    print("opt_level = {}".format(args.opt_level))
-    print("keep_batchnorm_fp32 = {}".format(args.keep_batchnorm_fp32), type(args.keep_batchnorm_fp32))
-    print("loss_scale = {}".format(args.loss_scale), type(args.loss_scale))
-
-    print("\nCUDNN VERSION: {}\n".format(torch.backends.cudnn.version()))
 
     cudnn.benchmark = True
     best_prec1 = 0
@@ -114,19 +113,35 @@ def main():
     if 'WORLD_SIZE' in os.environ:
         args.distributed = int(os.environ['WORLD_SIZE']) > 1
 
+    args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
+    os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
+    global logger
+    logger = create_logger('global_logger', "results/{}/log.txt".format(args.log_dir))
     args.gpu = 0
     args.world_size = 1
 
     if args.distributed:
-        print(args.local_rank)
+        logger.info(args.local_rank)
         args.gpu = args.local_rank
         torch.cuda.set_device(args.gpu)
         torch.distributed.init_process_group(backend='nccl',
                                              init_method='env://')
         args.world_size = torch.distributed.get_world_size()
-    print(args.world_size)
+    logger.info(args.world_size)
+    if args.local_rank == 0:
+
+        wandb.init(project="imagenet", dir="results/{}".format(args.log_dir),
+           name=args.log_dir,)
+        wandb.config.update(args)
+
+
+        logger.info("\nCUDNN VERSION: {}\n".format(torch.backends.cudnn.version()))
+
+
+
 
     args.batch_size = int(args.batch_size/args.world_size)
+    logger.info(args.batch_size)
 
     assert torch.backends.cudnn.enabled, "Amp requires cudnn backend to be enabled."
 
@@ -137,15 +152,15 @@ def main():
 
     # create model
     if args.pretrained:
-        print("=> using pre-trained model '{}'".format(args.arch))
+        logger.info("=> using pre-trained model '{}'".format(args.arch))
         model = models.__dict__[args.arch](pretrained=True)
     else:
-        print("=> creating model '{}'".format(args.arch))
+        logger.info("=> creating model '{}'".format(args.arch))
         model = models.__dict__[args.arch]()
 
     if args.sync_bn:
         import apex
-        print("using apex synced BN")
+        logger.info("using apex synced BN")
         model = apex.parallel.convert_syncbn_model(model)
 
     model = model.cuda()
@@ -183,16 +198,16 @@ def main():
         # Use a local scope to avoid dangling references
         def resume():
             if os.path.isfile(args.resume):
-                print("=> loading checkpoint '{}'".format(args.resume))
+                logger.info("=> loading checkpoint '{}'".format(args.resume))
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
                 model.load_state_dict(checkpoint['state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                print("=> loaded checkpoint '{}' (epoch {})"
+                logger.info("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
-                print("=> no checkpoint found at '{}'".format(args.resume))
+                logger.info("=> no checkpoint found at '{}'".format(args.resume))
         resume()
 
     # Data loading code
@@ -251,7 +266,7 @@ def main():
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
-        prec1 = validate(val_loader, model, criterion)
+        prec1 = validate(epoch, val_loader, model, criterion)
 
         # remember best prec@1 and save checkpoint
         if args.local_rank == 0:
@@ -336,7 +351,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     while input is not None:
         i += 1
         if args.prof >= 0 and i == args.prof:
-            print("Profiling begun at iteration {}".format(i))
+            logger.info("Profiling begun at iteration {}".format(i))
             torch.cuda.cudart().cudaProfilerStart()
 
         if args.prof >= 0: torch.cuda.nvtx.range_push("Body of iteration {}".format(i))
@@ -358,7 +373,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
 
         # for param in model.parameters():
-        #     print(param.data.double().sum().item(), param.grad.data.double().sum().item())
+        #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
 
         if args.prof >= 0: torch.cuda.nvtx.range_push("optimizer.step()")
         optimizer.step()
@@ -388,9 +403,14 @@ def train(train_loader, model, criterion, optimizer, epoch):
             torch.cuda.synchronize()
             batch_time.update((time.time() - end)/args.print_freq)
             end = time.time()
+            remain_iter = args.epochs * len(train_loader) - (epoch*len(train_loader) + i)
+            remain_time = remain_iter * batch_time.avg
+            t_m, t_s = divmod(remain_time, 60)
+            t_h, t_m = divmod(t_m, 60)
+            remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
             if args.local_rank == 0:
-                print('Epoch: [{0}][{1}/{2}]\t'
+                logger.info('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Speed {3:.3f} ({4:.3f})\t'
                       'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
@@ -401,6 +421,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        args.world_size*args.batch_size/batch_time.avg,
                        batch_time=batch_time,
                        loss=losses, top1=top1, top5=top5))
+                logger.info("remain time:  {}".format(remain_time))
+        if args.local_rank == 0:
+            wandb.log({"train/acc_epoch": 100.*top1.avg}, epoch)
+            wandb.log({"train/loss_epoch": losses.avg}, epoch)
         if args.prof >= 0: torch.cuda.nvtx.range_push("prefetcher.next()")
         input, target = prefetcher.next()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
@@ -409,12 +433,12 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
 
         if args.prof >= 0 and i == args.prof + 10:
-            print("Profiling ended at iteration {}".format(i))
+            logger.info("Profiling ended at iteration {}".format(i))
             torch.cuda.cudart().cudaProfilerStop()
             quit()
 
 
-def validate(val_loader, model, criterion):
+def validate(epoch, val_loader, model, criterion):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -456,7 +480,7 @@ def validate(val_loader, model, criterion):
 
         # TODO:  Change timings to mirror train().
         if args.local_rank == 0 and i % args.print_freq == 0:
-            print('Test: [{0}/{1}]\t'
+            logger.info('Test: [{0}/{1}]\t'
                   'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                   'Speed {2:.3f} ({3:.3f})\t'
                   'Loss {loss.val:.4f} ({loss.avg:.4f})\t'
@@ -469,8 +493,11 @@ def validate(val_loader, model, criterion):
                    top1=top1, top5=top5))
 
         input, target = prefetcher.next()
+    if args.local_rank == 0:
+        wandb.log({"test/acc_epoch": top1.avg}, epoch)
+        wandb.log({"test/loss_epoch": losses.avg}, epoch)
 
-    print(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
+    logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
 
     return top1.avg
@@ -513,8 +540,6 @@ def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
 
-    # if(args.local_rank == 0):
-    #     print("epoch = {}, step = {}, lr = {}".format(epoch, step, lr))
 
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
