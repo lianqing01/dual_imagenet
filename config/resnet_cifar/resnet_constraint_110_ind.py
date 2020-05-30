@@ -12,7 +12,7 @@ args = parser.parse_args()
 for i in range(len(args.noise)):
     script = "CUDA_VISIBLE_DEVICES={} python train_constraint_bn_v2_1.py \
     --model {} \
-    --log_dir vgg/resnet20_constraint_bsz_8_noise_ind_{} \
+    --log_dir vgg/resnet110_constraint_bsz_128_noise_ind_{} \
     --lr 0.1 \
     --constraint_lr 0.01 \
     --batch-size 128 \
