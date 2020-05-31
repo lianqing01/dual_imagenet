@@ -62,7 +62,7 @@ parser.add_argument('--no-augment', dest='augment', action='store_false',
                     help='use standard augmentation (default: True)')
 parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=3)
+parser.add_argument('--grad_clip', default=1)
 parser.add_argument('--optim_loss', default="cross_entropy")
 parser.add_argument('--num_classes', default=10, type=int)
 parser.add_argument('--print_freq', default=10, type=int)
