@@ -84,11 +84,6 @@ class Constraint_Norm(nn.Module):
 
         self.noise_mu_ = []
         self.noise_gamma_ = []
-    def add_grad_noise_(self):
-        noise_mu = torch.normal(mean=0, std=self.noise_mu_std)
-        noise_gamma = torch.normal(mean=0, std=self.noise_gamma_std)
-        self.mu_.grad += noise_mu
-        self.gamma_.grad += noise_gamma
 
 
 
@@ -156,14 +151,6 @@ class Constraint_Norm(nn.Module):
 
         self.tracking_times += 1
         #self.summarize_x_hat.append(x.detach())
-        if self.training == True:
-            if self.add_noise == "after_x":
-                noise_mean = torch.normal(mean=self.sample_mean.fill_(0), std= self.sample_mean_std)
-                noise_var = torch.normal(mean=self.sample_mean.fill_(1), std= self.sample_var_std)
-                noise_mean = noise_mean.view(self.mu_.size())
-                noise_var = noise_var.view(self.gamma_.size())
-                x = x * noise_var + noise_mean
-            #self.summarize_x_hat_noise.append(x.detach())
         if self.post_affine != False:
             x = self.post_affine_layer(x)
         return x
