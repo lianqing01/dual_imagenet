@@ -149,7 +149,6 @@ net = models.__dict__[args.model](num_classes=num_classes)
 if args.resume:
     # Load checkpoint.
     logger.info('==> Resuming from checkpoint..')
-    assert os.path.isdir('checkpoint'), 'Error: no checkpoint directory found!'
     checkpoint = torch.load(args.load_model)
     state_dict = checkpoint['state_dict']
     try:
