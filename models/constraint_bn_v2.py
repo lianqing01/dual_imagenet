@@ -108,6 +108,8 @@ class Constraint_Norm(nn.Module):
 
 
     def forward(self, x):
+        if self.tracking_times > 1000:
+            self.reset_norm_statistics()
 
         # mean
         self.pre_mean = x.mean(self.norm_dim)

@@ -16,13 +16,15 @@ for i in range(len(args.noise)):
     --lr 0.0025 \
     --constraint_lr 0.00025 \
     --batch-size 2 \
+    --resume \
+    --load_model results/vgg/vgg16_constraint_bsz_2_noise_ind1_{}/epoch_39.pth \
     --constraint_decay 1 \
     --lambda_constraint_weight 0.001 \
     --noise_data_dependent False \
     --noise_mean_std {} \
     --noise_var_std {} \
     --sample_noise True \
-    --decrease_affine_lr 0.1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i])
+    --decrease_affine_lr 0.1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i], args.noise[i])
     print(script)
     gpu_script = "export CUDA_VISIBLE_DEVICES={}".format(args.gpus[i])
     subprocess.Popen(gpu_script, shell=True)
