@@ -4,7 +4,7 @@ import time
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--model', default="vgg16_constraint_bn_v2", type=str, help='learning rate')
 parser.add_argument('--gpus', default=[0,1,2,3], type=list)
-parser.add_argument('--noise', default=[1e-1, 1e-2, 1e-3, 1e-4], type=list)
+parser.add_argument('--noise', default=[1e-1, 1e-2], type=list)
 
 
 args = parser.parse_args()
@@ -17,12 +17,14 @@ for i in range(len(args.noise)):
     --constraint_lr 0.0003125 \
     --batch-size 4 \
     --constraint_decay 1 \
+    --resume \
+    --load_model results/vgg/vgg16_constraint_bsz_8_noise_ind_{}/epoch_139.pth \
     --lambda_constraint_weight 0.001 \
     --noise_data_dependent False \
     --noise_mean_std {} \
     --noise_var_std {} \
     --sample_noise True \
-    --decrease_affine_lr 0.1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i])
+    --decrease_affine_lr 0.1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i], args.noise[i])
     print(script)
     gpu_script = "export CUDA_VISIBLE_DEVICES={}".format(args.gpus[i])
     subprocess.Popen(gpu_script, shell=True)

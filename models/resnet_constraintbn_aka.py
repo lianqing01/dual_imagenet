@@ -100,9 +100,6 @@ class resnet_constraint(nn.Module):
         self.linear = nn.Linear(64, num_classes)
 
         self.apply(_weights_init)
-        for m in self.modules():
-            if isinstance(m, BasicBlock):
-                m.bn2.post_affine_layer.u_.data.fill_(0)
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
