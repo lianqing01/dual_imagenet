@@ -8,7 +8,7 @@ python train_constraint_bn_v2_1.py --model vgg16_constraint_bn_v2 \
     --noise_data_dependent False \
     --noise_mean_std 0.1 \
     --noise_var_std 0.1 \
-    --sample_noise True \
+    --sample_noise False \
     --decrease_affine_lr 0.1 \
 
 

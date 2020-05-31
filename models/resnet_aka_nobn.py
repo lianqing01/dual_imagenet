@@ -60,7 +60,6 @@ class BasicBlock(nn.Module):
         super(BasicBlock, self).__init__()
         self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=True)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=True)
-        self.scalar = nn.Parameter(torch.zeros(1))
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != planes:
