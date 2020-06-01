@@ -16,8 +16,6 @@ for i in range(len(args.noise)):
     --lr 0.0025 \
     --constraint_lr 0.00025 \
     --batch-size 2 \
-    --resume \
-    --load_model results/vgg/vgg16_constraint_bsz_2_noise_ind1_{}/epoch_39.pth \
     --constraint_decay 1 \
     --lambda_constraint_weight 0.001 \
     --noise_data_dependent False \
