@@ -56,9 +56,8 @@ class BasicBlock(nn.Module):
         identity = x
 
         out = self.conv1(x)
-        out = self.bn1(out)
         out = self.relu(out)
-
+        out = self.bn1(out)
         out = self.conv2(out)
         out = self.bn2(out)
 
@@ -101,13 +100,13 @@ class Bottleneck(nn.Module):
         identity = x
 
         out = self.conv1(x)
+        out = self.relu(out)
+
         out = self.bn1(out)
-        out = self.relu(out)
-
         out = self.conv2(out)
-        out = self.bn2(out)
         out = self.relu(out)
 
+        out = self.bn2(out)
         out = self.conv3(out)
         out = self.bn3(out)
 
@@ -191,8 +190,9 @@ class resnet_constraint(nn.Module):
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
-        x = self.bn1(x)
         x = self.relu(x)
+
+        x = self.bn1(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
