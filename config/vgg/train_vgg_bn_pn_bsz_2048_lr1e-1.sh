@@ -3,3 +3,5 @@ python train_pn.py --model vgg16_pn \
     --pn-batch-size 2048 \
     --batch-size 128 \
     --lr 0.1 \
+    --sample_noise True \
+    --data_dependent True \
