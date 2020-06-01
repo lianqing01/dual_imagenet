@@ -132,12 +132,16 @@ class _BatchNorm(_NormBase):
 
                             sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
                             sample_mean_var *= (group) / max(float(group - 1), 1)
+                            self.mean = mean
+                            self.sample_mean_var = sample_mean_var
                             #sample_mean_var[sample_mean_var<0] = 0
                             sample_mean_var = torch.clamp(sample_mean_var, min=0)
                             sample_mean_std = torch.sqrt(sample_mean_var)
                             #sample std var
                             sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
                             sample_var_var *= (group) / max(float(group - 1), 1)
+                            self.var = var
+                            self.sample_var_var = sample_var_var
                             #sample_std_var[sample_std_var<0] = 0
                             sample_var_var = torch.clamp(sample_var_var, min=0)
 
@@ -163,6 +167,7 @@ class _BatchNorm(_NormBase):
                         elif self.data_dependent != "after_x":
                             noise_var = var + noise_var
                             noise_var = torch.clamp(noise_var, min=0)
+                '''
                 if self.data_dependent == "after_x":
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)))
                     # add noise
@@ -188,6 +193,9 @@ class _BatchNorm(_NormBase):
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps))) * _unsqueeze_ft(r) + \
                         _unsqueeze_ft(d)
                     output = output * _unsqueeze_ft(self.weight) + _unsqueeze_ft(self.bias)
+                '''
+                output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+                    + _unsqueeze_ft(self.bias)
 
                 input = input.view(input_shape)
                 with torch.no_grad():
