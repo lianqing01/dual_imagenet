@@ -44,6 +44,21 @@ def str2bool(v):
         else:
             raise argparse.ArgumentTypeError('Boolean value expected.')
 
+def accuracy(output, target, topk=(1,)):
+    """Computes the precision@k for the specified values of k"""
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+        correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+        res.append(correct_k.mul_(100.0 / batch_size))
+    return res
+
 
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=0.1, type=float, help='learning rate')
@@ -664,6 +679,9 @@ def test(epoch):
     global best_acc
     net.eval()
     test_loss = 0
+    acc2 = AverageMeter(100)
+    acc3 = AverageMeter(100)
+
     correct = 0
     total = 0
     for m in net.modules():
@@ -686,8 +704,12 @@ def test(epoch):
 
             test_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
+            acc1, acc2_, acc3_ = accuracy(outputs, targets, topk=(1,2,3))
+
             total += targets.size(0)
             correct += predicted.eq(targets.data).cpu().sum()
+            acc2.update(float(acc2_))
+            acc3.update(float(acc3_))
 
         progress_bar(batch_idx, len(testloader),
                      'Loss: %.3f | Acc: %.3f%% (%d/%d)'
@@ -705,6 +727,7 @@ def test(epoch):
                 var.append(var_.abs())
     mean = torch.mean(torch.stack(mean))
     var = torch.mean(torch.stack(var))
+
 
     curr_idx = epoch * len(trainloader)
     tb_logger.add_scalar("test/test_loss", test_loss/batch_idx, curr_idx)
@@ -735,6 +758,8 @@ def test(epoch):
 
     wandb.log({"test/norm_mean(abs)_epoch":mean.item()}, step=epoch)
     wandb.log({"test/norm_var-1(abs)_epoch":var.item()}, step=epoch)
+    logger.info("acc2: {}".format(acc2.avg))
+    logger.info("acc3: {}".format(acc3.avg))
 
 
 
