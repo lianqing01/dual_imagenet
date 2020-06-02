@@ -98,14 +98,32 @@ class Constraint_Norm(nn.Module):
     def set_dim(self):
         raise NotImplementedError
 
-    def _initialize_mu(self):
+    def _initialize_mu(self, with_affine=False):
         self.mean = self.mean / self.tracking_times
+        if with_affine==True:
+            self.old_mu_ = self.mu_
         self.mu_.data += self.mean.view(self.mu_.size())
 
-    def _initialize_gamma(self):
+    def _initialize_gamma(self, with_affine=False):
         self.var = self.var / self.tracking_times
+        if with_affine==True:
+            self.old_gamma_ = self.gamma_
         self.gamma_.data/= torch.sqrt(self.var.view(self.gamma_.size()).clamp(min=0))
 
+
+    def _initialize_affine(self):
+        temp = self.post_affine_layer.u_ * self.old_mu_
+        temp = temp.clone()
+        result = self.post_affine_layer.u_.data * self.old_gamma_.data / (self.gamma_.data + 1e-4)
+
+        self.post_affine_layer.u_.data.copy(result)
+        new_temp = self.post_affine_layer.u_ * self.mu_
+        result = self.post_affine_layer.c_.data - temp.data + new_temp.data
+
+        self.post_affine_layer.c_.data.copy_(result)
+        del temp, new_temp
+        del self.old_gamma_
+        del self.old_mu_
 
     def forward(self, x):
         if self.tracking_times > 1000:
