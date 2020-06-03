@@ -317,6 +317,18 @@ def train(epoch):
             #experiment.log_metric("acc_step", acc.avg, curr_idx)
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
+    mean_stat = []
+    layer = 0
+    for m in net.modules():
+        if isinstance(m, BatchNorm2d):
+            mean = m.mean
+            mean_var = m.sample_mean_var
+            var = m.var
+            var_var = m.sample_var_var
+            mean_stat.append([mean, mean_var, var, var_var])
+    import pdb
+    pdb.set_trace()
+
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)

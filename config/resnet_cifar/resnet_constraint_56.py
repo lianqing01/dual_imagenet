@@ -4,7 +4,7 @@ import time
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--model', default="resnet_constraint56", type=str, help='learning rate')
 parser.add_argument('--gpus', default=[0,1,2,3], type=list)
-parser.add_argument('--noise', default=[1e-1, 1e-2, 1e-3, 1e-4], type=list)
+parser.add_argument('--noise', default=[1e-1, 1e-2, 1e-3, 5e-2], type=list)
 
 
 args = parser.parse_args()

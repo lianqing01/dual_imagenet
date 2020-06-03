@@ -160,6 +160,7 @@ class _BatchNorm(_NormBase):
                         # check noise mean and noise var like batch renormalization
                         # for noise mean
                         # for noise var
+                        '''
                         if not self.batch_renorm and self.data_dependent != "after_x":
                             noise_var = torch.clamp(noise_var, min=-1 * var.min() + 1/self.r_max, max=self.r_max)
                             mean = mean + noise_mean.detach()
@@ -167,6 +168,7 @@ class _BatchNorm(_NormBase):
                         elif self.data_dependent != "after_x":
                             noise_var = var + noise_var
                             noise_var = torch.clamp(noise_var, min=0)
+                        '''
                 '''
                 if self.data_dependent == "after_x":
                     output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)))
