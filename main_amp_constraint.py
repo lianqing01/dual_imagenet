@@ -338,7 +338,7 @@ def main():
         # model = DDP(model)
         # delay_allreduce delays all communication to the end of the backward pass.
         model = DDP(model, delay_allreduce=True)
-        model_old = DDP(model, delay_allreduce=True)
+        #model_old = DDP(model, delay_allreduce=True)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -425,12 +425,14 @@ def main():
 
         '''
         if epoch % 1 == 0:
-            for p1, p2 in zip(model.parameters(), model_old.parameters()):
-                p2.data.copy_(p1.data)
             torch.cuda.synchronize()
             _reset(train_loader, model, criterion, optimizer, epoch)
+
+            for p1, p2 in zip(model.parameters(), model_old.parameters()):
+                p2.data.copy_(p1.data)
             get_momentum(train_loader, model,model_old, criterion, optimizer, epoch)
         '''
+
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
@@ -700,7 +702,7 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
     i = 0
     while input is not None:
         i += 1
-        if i > 10:
+        if i > 50:
             return None
 
 
