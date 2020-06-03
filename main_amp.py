@@ -15,8 +15,7 @@ import torch.utils.data.distributed
 from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import torchvision.models as models
-
+import models
 import numpy as np
 
 try:

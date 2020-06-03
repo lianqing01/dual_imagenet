@@ -99,11 +99,11 @@ class FixupResNet(nn.Module):
         super(FixupResNet, self).__init__()
         self.num_layers = sum(layers)
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bias1 = nn.Parameter(torch.zeros(1))
         self.relu = nn.ReLU(inplace=True)
-        #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
@@ -144,7 +144,7 @@ class FixupResNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.relu(x + self.bias1)
-        #x = self.maxpool(x)
+        x = self.maxpool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
