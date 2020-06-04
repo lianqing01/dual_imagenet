@@ -719,8 +719,6 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
             scaled_loss.backward()
         grads = [p.grad.max() for p in model.parameters()]
         grads = torch.stack(grads).max()
-        if grads>args.grad_clip:
-            logger.info("============  gradient > 1: grad: {} ==============".format(grads))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -1055,10 +1053,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         with amp.scale_loss(loss, optimizer) as scaled_loss:
             scaled_loss.backward()
-        grads = [p.grad.max() for p in model.parameters()]
-        grads = torch.stack(grads).max()
-        if grads>1:
-            logger.info("============  gradient > 1: grad: {} ==============".format(grads))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -1066,7 +1060,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         optimizer.step()
 
-        if i%args.print_freq == 0:
+        if i%200 == 0:
             mean = []
             var = []
             for m in model.modules():
