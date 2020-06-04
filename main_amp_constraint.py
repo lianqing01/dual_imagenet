@@ -144,7 +144,7 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=10, type=int)
+    parser.add_argument('--print_freq', default=100, type=int)
 
 
 
@@ -1060,7 +1060,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         optimizer.step()
 
-        if i%200 == 0:
+        if i%args.print_freq == 0:
             mean = []
             var = []
             for m in model.modules():
