@@ -159,6 +159,9 @@ class resnet_constraint_init(nn.Module):
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 m.bias.data.fill_(0)
+            if isinstance(m, nn.Linear):
+                m.weight.data.fill_(0)
+                m.bias.data.fill_(0)
         for m in self.modules():
             if isinstance(m, BasicBlock):
                 m.bn2.post_affine_layer.u_.data.fill_(0)
