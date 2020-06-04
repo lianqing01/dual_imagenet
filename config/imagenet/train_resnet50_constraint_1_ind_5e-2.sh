@@ -1,6 +1,6 @@
-python -m torch.distributed.launch --nproc_per_node=$1 --master_port=1222 main_amp_constraint.py -a resnet_constraint34 --b 512 --workers 8 --opt-level O1  \
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=1222 main_amp_constraint.py -a resnet_constraint50 --b 512 --workers 8 --opt-level O1  \
     ./data/imagenet \
-    --log_dir imagenet/constraint_34_5e-2_ind_5e-2 \
+    --log_dir imagenet/constraint_50_5e-2_ind_5e-2 \
     --constraint_lr 0.01 \
     --constraint_decay 1 \
     --lambda_constraint_weight 1e-3 \

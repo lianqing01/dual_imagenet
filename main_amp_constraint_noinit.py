@@ -144,7 +144,7 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=100, type=int)
+    parser.add_argument('--print_freq', default=10, type=int)
 
 
 
@@ -388,7 +388,6 @@ def main():
     #initialization
     with torch.no_grad():
         print("===initializtion====")
-        _initialize(train_loader, model, criterion, optimizer, 0)
     for m in model.modules():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
@@ -719,6 +718,8 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
             scaled_loss.backward()
         grads = [p.grad.max() for p in model.parameters()]
         grads = torch.stack(grads).max()
+        if grads>args.grad_clip:
+            logger.info("============  gradient > 1: grad: {} ==============".format(grads))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -1053,6 +1054,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         with amp.scale_loss(loss, optimizer) as scaled_loss:
             scaled_loss.backward()
+        grads = [p.grad.max() for p in model.parameters()]
+        grads = torch.stack(grads).max()
+        if grads>1:
+            logger.info("============  gradient > 1: grad: {} ==============".format(grads))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
