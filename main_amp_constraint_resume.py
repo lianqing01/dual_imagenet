@@ -133,7 +133,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=3)
+    parser.add_argument('--grad_clip', default=1)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -296,6 +296,26 @@ def main():
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay)
 
+    else:
+        origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, model.parameters())
+        if args.decrease_affine_lr is not None:
+            affine_lr = args.decrease_affine_lr * args.lr
+        else:
+            affine_lr = args.lr
+        args.affine_lr = affine_lr
+
+        optimizer = optim.SGD([
+                        {'params': origin_param},
+                        {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
+                                'lr': args.constraint_lr,
+                                'weight_decay': args.constraint_decay},
+                        {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, model.parameters()),
+                                'lr': affine_lr,
+                                'weight_decay': args.affine_weight_decay,
+                                'momentum': args.affine_momentum}
+                        ],
+                        lr=args.lr, momentum=0.9,
+                        weight_decay=args.decay)
 
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
@@ -323,18 +343,41 @@ def main():
     # Optionally resume from a checkpoint
     if args.resume:
         # Use a local scope to avoid dangling references
+
         def resume():
             if os.path.isfile(args.resume):
                 logger.info("=> loading checkpoint '{}'".format(args.resume))
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
+                old_stat = model.state_dict()
+                for key, item in checkpoint['state_dict'].items():
+                    if key in old_stat:
+                        print(key)
+                        old_stat[key] = item
+                    else:
+                        print("missing: {}".format(key))
+                        if 'running_mean' in key:
+                            key = key.replace("running_mean", "mu_")
+                            old_stat[key] = item.view([1, -1, 1, 1])
+                        if 'running_var' in key:
+                            key = key.replace("running_var", "gamma_")
+                            old_stat[key] = 1/torch.sqrt(item.view([1, -1, 1, 1]) + 1e-4)
+                        if 'weight' in key:
+                            key = key.replace("weight", "post_affine_layer.u_")
+                            old_stat[key] = item.view([1, -1, 1, 1])
+
+                        if 'bias' in key and 'bn' in key:
+                            key = key.replace("bias", "post_affine_layer.c_")
+                            old_stat[key] = item.view([1, -1, 1, 1])
+
+                model.load_state_dict(old_stat)
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
-                model.load_state_dict(checkpoint['state_dict'])
-                optimizer.load_state_dict(checkpoint['optimizer'])
-                logger.info("=> loaded checkpoint '{}' (epoch {})"
-                      .format(args.resume, checkpoint['epoch']))
+                logger.info("=> loaded checkpoint '{}' (epoch {})".format(args.resume, checkpoint['epoch']))
+
+                args.start_epoch = 30
             else:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
+                best_prec1 = 40
         resume()
 
     # Data loading code
@@ -388,7 +431,6 @@ def main():
     #initialization
     with torch.no_grad():
         print("===initializtion====")
-        _initialize(train_loader, model, criterion, optimizer, 0)
     for m in model.modules():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
@@ -719,7 +761,7 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
             scaled_loss.backward()
         grads = [p.grad.max() for p in model.parameters()]
         grads = torch.stack(grads).max()
-        if grads>args.grad_clip:
+        if grads>1:
             logger.info("============  gradient > 1: grad: {} ==============".format(grads))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
@@ -1261,18 +1303,21 @@ def adjust_learning_rate(optimizer, epoch, step, len_epoch):
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
+    affine_lr = args.affine_lr*(0.1**factor)
     constraint_lr = args.constraint_lr * (0.1 ** factor)
 
 
     """Warmup"""
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
+        affine_lr =  affine_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
         constraint_lr = constraint_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
 
 
 
     optimizer.param_groups[0]['lr'] = lr
     optimizer.param_groups[1]['lr'] = constraint_lr
+    optimizer.param_groups[2]['lr'] = affine_lr
 
 
 
