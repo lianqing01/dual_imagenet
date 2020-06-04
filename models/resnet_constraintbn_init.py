@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from .constraint_bn_v2 import *
+from math import sqrt
 
 __all__ = ['resnet_constraint_init', 'resnet_constraint_init18', 'resnet_constraint_init34', 'resnet_constraint_init50', 'resnet_constraint_init101',
            'resnet_constraint_init152', 'resnext50_32x4d', 'resnext101_32x8d',
@@ -49,20 +50,23 @@ class BasicBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = norm_layer(planes)
+        self.bias2b = nn.Parameter(torch.zeros(1))
+        self.bias1a = nn.Parameter(torch.zeros(1))
+
         self.downsample = downsample
         self.stride = stride
 
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x)
+        out = self.conv1(x + self.bias1a)
         out = self.relu(out)
         out = self.bn1(out)
         out = self.conv2(out)
-        out = self.bn2(out)
+        out = self.bn2(out) + self.bias2b
 
         if self.downsample is not None:
-            identity = self.downsample(x)
+            identity = self.downsample(x + self.bias1a)
 
         out += identity
         out = self.relu(out)
@@ -164,7 +168,8 @@ class resnet_constraint_init(nn.Module):
                 m.bias.data.fill_(0)
         for m in self.modules():
             if isinstance(m, BasicBlock):
-                m.bn2.post_affine_layer.u_.data.fill_(0)
+                m.bn2.post_affine_layer.u_.data.fill_(1/float(sqrt(8)))
+                #m.conv2.weight.data.fill_(0)
 
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.

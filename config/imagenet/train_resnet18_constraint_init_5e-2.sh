@@ -6,7 +6,7 @@ python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3622 main_a
     --lambda_constraint_weight 1e-3 \
     --lambda_weight_mean 5 \
     --decrease_affine_lr 1 \
-    --sample_noise True \
+    --sample_noise False \
     --noise_data_dependent False \
     --noise_mean_std 0.05 \
     --noise_var_std 0.05 \
