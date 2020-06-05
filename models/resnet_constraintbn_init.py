@@ -46,12 +46,11 @@ class BasicBlock(nn.Module):
             raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
         # Both self.conv1 and self.downsample layers downsample the input when stride != 1
         self.conv1 = conv3x3(inplanes, planes, stride)
-        self.bn1 = norm_layer(planes)
+        self.bn1 = norm_layer(inplanes)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = norm_layer(planes)
-        self.bias2b = nn.Parameter(torch.zeros(1))
-        self.bias1a = nn.Parameter(torch.zeros(1))
+        self.bn3 = norm_layer(planes)
 
         self.downsample = downsample
         self.stride = stride
@@ -59,14 +58,16 @@ class BasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x + self.bias1a)
+        out = self.bn1(x)
+        out = self.conv1(out)
         out = self.relu(out)
-        out = self.bn1(out)
+
+        out = self.bn2(out)
         out = self.conv2(out)
-        out = self.bn2(out) + self.bias2b
+        out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x + self.bias1a)
+            identity = self.downsample(x)
 
         out += identity
         out = self.relu(out)
@@ -168,7 +169,7 @@ class resnet_constraint_init(nn.Module):
                 m.bias.data.fill_(0)
         for m in self.modules():
             if isinstance(m, BasicBlock):
-                m.bn2.post_affine_layer.u_.data.fill_(1/float(sqrt(8)))
+                m.bn3.post_affine_layer.u_.data.fill_(1/float(sqrt(8)))
                 #m.conv2.weight.data.fill_(0)
 
         # Zero-initialize the last BN in each residual branch,
