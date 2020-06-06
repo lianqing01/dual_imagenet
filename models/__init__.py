@@ -12,6 +12,7 @@ from .resnet_nobn import *
 from .resnet_constraintbn import *
 from .resnet_constraintbn_init import *
 from .resnet_constraintbn_v3 import *
+from .vgg_imagenet import *
 from .resnet_nobn_v2 import *
 from .fixup_resnet_imagenet import *
 from .resnet_brn import *
