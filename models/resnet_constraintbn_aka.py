@@ -124,7 +124,7 @@ class resnet_constraint(nn.Module):
 
 
 def resnet_constraint20(num_classes=10):
-    return resnet_constraint(BasicBlock, [3, 3, 3])
+    return resnet_constraint(BasicBlock, [3, 3, 3], num_classes)
 
 
 def resnet_constraint32():

@@ -8,6 +8,7 @@ from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
 from .batchnorm import BatchNorm2d
 from .instancenorm import InstanceNorm2d
+from .batchrenorm import BatchRenorm2d
 
 
 cfg = {
@@ -76,6 +77,10 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
+                elif with_bn == 'bn_v2':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               nn.ReLU(inplace=True),
+                               nn.BatchNorm2d(x)]
                 elif with_bn == 'bn_population':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                BatchNorm2d(x),
@@ -101,7 +106,7 @@ class VGG(nn.Module):
                                 nn.ReLU(inplace=True)]
                 elif with_bn =='gn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                                nn.GroupNorm(64, x, affine=True),
+                                nn.GroupNorm(32, x, affine=True),
                                nn.ReLU(inplace=True)]
                 elif with_bn == 'constraint_bn_v2_no_affine':
                     if idx == 0:
@@ -153,6 +158,10 @@ def vgg25_constraint_bn_v2(num_classes=10):
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
+
+def vgg16_bn_v2(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn_v2')
+
 def vgg16_bn_moving_average(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
 def vgg16_pn(num_classes=10):

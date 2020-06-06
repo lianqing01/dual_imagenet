@@ -15,8 +15,7 @@ import torch.utils.data.distributed
 from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
-import torchvision.models as models
-
+import models
 import numpy as np
 
 try:
@@ -130,7 +129,7 @@ def main():
     logger.info(args.world_size)
     if args.local_rank == 0:
 
-        wandb.init(project="imagenet", dir="results/{}".format(args.log_dir),
+        wandb.init(project="imagemodel", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
         wandb.config.update(args)
 
@@ -278,7 +277,7 @@ def main():
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
                 'optimizer' : optimizer.state_dict(),
-            }, is_best)
+            }, is_best, filename = os.path.join("results/" + args.log_dir, "{}_checkpoint.pth.tar".format(epoch)))
 
 class data_prefetcher():
     def __init__(self, loader):
@@ -422,9 +421,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        batch_time=batch_time,
                        loss=losses, top1=top1, top5=top5))
                 logger.info("remain time:  {}".format(remain_time))
-        if args.local_rank == 0:
-            wandb.log({"train/acc_epoch": 100.*top1.avg}, epoch)
-            wandb.log({"train/loss_epoch": losses.avg}, epoch)
         if args.prof >= 0: torch.cuda.nvtx.range_push("prefetcher.next()")
         input, target = prefetcher.next()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
@@ -437,6 +433,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
             torch.cuda.cudart().cudaProfilerStop()
             quit()
 
+    if args.local_rank == 0:
+        wandb.log({"train/acc_epoch": top1.avg}, step=epoch)
+        wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
+        wandb.log({"train/loss_epoch": losses.avg},  step=epoch)
 
 def validate(epoch, val_loader, model, criterion):
     batch_time = AverageMeter()
@@ -494,8 +494,10 @@ def validate(epoch, val_loader, model, criterion):
 
         input, target = prefetcher.next()
     if args.local_rank == 0:
-        wandb.log({"test/acc_epoch": top1.avg}, epoch)
-        wandb.log({"test/loss_epoch": losses.avg}, epoch)
+        wandb.log({"test/acc_epoch": top1.avg},  step=epoch)
+        wandb.log({"test/acc5_epoch": top5.avg},  step=epoch)
+
+        wandb.log({"test/loss_epoch": losses.avg}, step= epoch)
 
     logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))

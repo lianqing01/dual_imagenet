@@ -8,6 +8,7 @@ from __future__ import print_function
 from comet_ml import Experiment
 
 import argparse
+from models.batchrenorm import BatchRenorm2d
 import os.path as osp
 import time
 import csv
@@ -52,7 +53,7 @@ parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--pn-batch-size', default=10000, type=int, help='batch size')
+parser.add_argument('--pn-batch-size', default=128, type=int, help='batch size')
 
 parser.add_argument('--epoch', default=200, type=int,
                     help='total epochs to run')
@@ -62,7 +63,7 @@ parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=3)
+parser.add_argument('--grad_clip', default=1)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
@@ -318,6 +319,7 @@ def train(epoch):
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
+
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
@@ -416,7 +418,7 @@ if use_cuda:
     device = torch.device("cuda")
 print(args.data_dependent)
 for m in net.modules():
-    if isinstance(m, BatchNorm2d):
+    if isinstance(m, BatchNorm2d) or isinstance(m, BatchRenorm2d):
         m.sample_noise = args.sample_noise
         m.data_dependent = args.data_dependent
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
@@ -424,8 +426,8 @@ for m in net.modules():
         m.sample_mean = torch.zeros(m.num_features).to(device)
         m.sample_mean_mean = torch.zeros(m.num_features).fill_(args.sample_mean_mean).to(device)
         m.sample_mean_var = torch.zeros(m.num_features).fill_(args.sample_mean_var).to(device)
-        m.sample_std_mean = torch.Tensor([args.sample_std_mean])[0].to(device)
-        m.sample_std_var = torch.Tensor([args.sample_std_var])[0].to(device)
+        m.sample_std_mean = torch.sqrt(torch.Tensor([args.sample_std_mean])[0].to(device))
+        m.sample_std_var = torch.sqrt(torch.Tensor([args.sample_std_var])[0].to(device))
         m.after_x = args.after_x
 
         m.r_max = args.r_max

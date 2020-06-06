@@ -4,7 +4,8 @@ import time
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--model', default="vgg16_constraint_bn_v2", type=str, help='learning rate')
 parser.add_argument('--gpus', default=[0,1,2,3, 0, 1, 2, 3], type=list)
-parser.add_argument('--noise', default=[5e-1, 1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4], type=list)
+#parser.add_argument('--noise', default=[5e-1, 1e-1, 5e-2, 1e-2, 5e-3, 1e-3, 5e-4, 1e-4], type=list)
+parser.add_argument('--noise', default=[1], type=list)
 
 
 args = parser.parse_args()
@@ -13,7 +14,7 @@ for i in range(len(args.noise)):
     script = "CUDA_VISIBLE_DEVICES={} python train_constraint_bn_v2_1.py \
     --model {} \
     --log_dir vgg/vgg16_constraint_bsz_128_noise_ind_{} \
-    --lr 0.1 \
+    --lr 0.01 \
     --constraint_lr 0.05 \
     --batch-size 128 \
     --constraint_decay 1 \

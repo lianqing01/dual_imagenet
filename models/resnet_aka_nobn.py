@@ -117,7 +117,7 @@ class resnet_nobn(nn.Module):
 
 
 def resnet_nobn20(num_classes=10):
-    return resnet_nobn(BasicBlock, [3, 3, 3])
+    return resnet_nobn(BasicBlock, [3, 3, 3], num_classes)
 
 
 def resnet_nobn32(num_classes=10):
