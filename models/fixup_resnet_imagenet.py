@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
+from math import sqrt
 
 
 __all__ = ['FixupResNet', 'fixup_resnet18', 'fixup_resnet34', 'fixup_resnet50', 'fixup_resnet101', 'fixup_resnet152']
@@ -37,10 +38,10 @@ class FixupBasicBlock(nn.Module):
     def forward(self, x):
         identity = x
 
-        out = self.conv1(x )
+        out = self.conv1(x)
         out = self.relu(out)
 
-        out = self.conv2(out)
+        out = self.conv2(out + self.bias2a)
         out = out * self.scale + self.bias2b
 
         if self.downsample is not None:
@@ -111,22 +112,17 @@ class FixupResNet(nn.Module):
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.bias2 = nn.Parameter(torch.zeros(1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
 
         for m in self.modules():
             if isinstance(m, FixupBasicBlock):
-                #nn.init.normal_(m.conv1.weight, mean=0, std=np.sqrt(2 / (m.conv1.weight.shape[0] * np.prod(m.conv1.weight.shape[2:]))) * self.num_layers ** (-0.5))
-                nn.init.constant_(m.conv2.weight, 0)
-                #if m.downsample is not None:
-                #    #nn.init.normal_(m.downsample.weight, mean=0, std=np.sqrt(2 / (m.downsample.weight.shape[0] * np.prod(m.downsample.weight.shape[2:]))))
+                #nn.init.constant_(m.conv2.weight, 0)
+                m.scale.data.fill_(1/sqrt(8))
             elif isinstance(m, FixupBottleneck):
-                nn.init.normal_(m.conv1.weight, mean=0, std=np.sqrt(2 / (m.conv1.weight.shape[0] * np.prod(m.conv1.weight.shape[2:]))) * self.num_layers ** (-0.25))
-                nn.init.normal_(m.conv2.weight, mean=0, std=np.sqrt(2 / (m.conv2.weight.shape[0] * np.prod(m.conv2.weight.shape[2:]))) * self.num_layers ** (-0.25))
                 nn.init.constant_(m.conv3.weight, 0)
-                if m.downsample is not None:
-                    nn.init.normal_(m.downsample.weight, mean=0, std=np.sqrt(2 / (m.downsample.weight.shape[0] * np.prod(m.downsample.weight.shape[2:]))))
             elif isinstance(m, nn.Linear):
                 nn.init.constant_(m.weight, 0)
                 nn.init.constant_(m.bias, 0)
