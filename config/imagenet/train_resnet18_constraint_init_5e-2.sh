@@ -1,4 +1,5 @@
 python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3622 main_amp_constraint.py -a resnet_constraint_init18 --b 256 --workers 8 --opt-level O1  \
+    --mixed_precision False \
     ./data/imagenet \
     --log_dir imagenet/constraint_18_init_ind_5e-2 \
     --constraint_lr 0.0005 \

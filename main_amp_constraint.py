@@ -73,6 +73,16 @@ def str2bool(v):
 
 
 import numpy as np
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
 
 try:
     from apex.parallel import DistributedDataParallel as DDP
@@ -145,6 +155,7 @@ def parse():
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
     parser.add_argument('--print_freq', default=100, type=int)
+    parser.add_argument('--mixed_precision', default=True, type=str2bool)
 
 
 
@@ -300,11 +311,12 @@ def main():
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
-    model, optimizer = amp.initialize(model, optimizer,
-                                      opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=args.keep_batchnorm_fp32,
-                                      loss_scale=args.loss_scale
-                                      )
+    if args.mixed_precision:
+        model, optimizer = amp.initialize(model, optimizer,
+                                        opt_level=args.opt_level,
+                                        keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                        loss_scale=args.loss_scale
+                                        )
 
     # For distributed training, wrap the model with apex.parallel.DistributedDataParallel.
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
@@ -1051,8 +1063,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss += constraint_loss
 
 
-        with amp.scale_loss(loss, optimizer) as scaled_loss:
-            scaled_loss.backward()
+        if args.mixed_precision:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
