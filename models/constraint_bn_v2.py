@@ -89,8 +89,8 @@ class Constraint_Norm(nn.Module):
 
     def get_mean_var(self):
         with torch.no_grad():
-            mean = self.mean / (self.tracking_times + 1e-11)
-            var = self.var / (self.tracking_times + 1e-11)
+            mean = self.mean / (self.tracking_times + 1e-4)
+            var = self.var / (self.tracking_times + 1e-4)
             mean = mean.abs().mean()
             var = var.abs().mean()
         return mean, var

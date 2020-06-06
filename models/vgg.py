@@ -1,178 +1,188 @@
+'''VGG11/13/16/19 in Pytorch.'''
 import torch
+import math
 import torch.nn as nn
+from torch.autograd import Variable
+from .dual_norm import DualNorm
+from .dual_norm import DualAffine
+from .constraint_bn_v2 import *
+from .batchnorm import BatchNorm2d
+from .instancenorm import InstanceNorm2d
 
 
-__all__ = [
-    'VGG', 'vgg11', 'vgg11_bn', 'vgg13', 'vgg13_bn', 'vgg16', 'vgg16_bn',
-    'vgg19_bn', 'vgg19',
-]
+cfg = {
+    'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
+    'VGG16': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
+    'VGG19': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG500': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*500 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG50': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*50 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
+    'VGG25': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256] + [256]*25 + ['M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
 
-
-model_urls = {
-    'vgg11': 'https://download.pytorch.org/models/vgg11-bbd30ac9.pth',
-    'vgg13': 'https://download.pytorch.org/models/vgg13-c768596a.pth',
-    'vgg16': 'https://download.pytorch.org/models/vgg16-397923af.pth',
-    'vgg19': 'https://download.pytorch.org/models/vgg19-dcbb9e9d.pth',
-    'vgg11_bn': 'https://download.pytorch.org/models/vgg11_bn-6002323d.pth',
-    'vgg13_bn': 'https://download.pytorch.org/models/vgg13_bn-abd245e5.pth',
-    'vgg16_bn': 'https://download.pytorch.org/models/vgg16_bn-6c64b313.pth',
-    'vgg19_bn': 'https://download.pytorch.org/models/vgg19_bn-c79401a0.pth',
 }
 
 
 class VGG(nn.Module):
-
-    def __init__(self, features, num_classes=1000, init_weights=True):
+    def __init__(self, vgg_name, num_classes = 10, with_bn=False):
         super(VGG, self).__init__()
-        self.features = features
-        self.avgpool = nn.AdaptiveAvgPool2d((7, 7))
+        self.features = self._make_layers(cfg[vgg_name], with_bn)
         self.classifier = nn.Sequential(
-            nn.Linear(512 * 7 * 7, 4096),
+            nn.Dropout(),
+            nn.Linear(512, 512),
             nn.ReLU(True),
             nn.Dropout(),
-            nn.Linear(4096, 4096),
+            nn.Linear(512, 512),
             nn.ReLU(True),
-            nn.Dropout(),
-            nn.Linear(4096, num_classes),
+            nn.Linear(512, num_classes),
         )
-        if init_weights:
-            self._initialize_weights()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        x = self.classifier(x)
-        return x
-
+        # Initialize weights
+        self._initialize_weights()
     def _initialize_weights(self):
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                nn.init.kaiming_normal_(m.weight, mode='fan_out')
                 if m.bias is not None:
                     nn.init.constant_(m.bias, 0)
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.Linear):
-                nn.init.normal_(m.weight, 0, 0.01)
-                nn.init.constant_(m.bias, 0)
+        '''
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                m.bias.data.zero_()
+       '''
 
+    def forward(self, x):
+        out = self.features(x)
+        out = out.view(out.size(0), -1)
+        out = self.classifier(out)
+        return out
 
-def make_layers(cfg, batch_norm=False):
-    layers = []
-    in_channels = 3
-    for v in cfg:
-        if v == 'M':
-            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-        else:
-            conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
-            if batch_norm:
-                layers += [conv2d, nn.BatchNorm2d(v), nn.ReLU(inplace=True)]
+    def _make_layers(self, cfg, with_bn=False):
+        layers = []
+        in_channels = 3
+        for idx, x in enumerate(cfg):
+            if x == 'M':
+                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
             else:
-                layers += [conv2d, nn.ReLU(inplace=True)]
-            in_channels = v
-    return nn.Sequential(*layers)
+                if with_bn == 'dual': # deprecated
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               DualNorm(x),
+                               nn.ReLU(inplace=True),
+                               DualAffine(x),]
+                elif with_bn == 'bn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               nn.BatchNorm2d(x),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'bn_population':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               BatchNorm2d(x),
+                               nn.ReLU(inplace=True)]
+
+                elif with_bn == 'brn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               BatchRenorm2d(x, momentum=0.5),
+                               nn.ReLU(inplace=True)]
+
+                elif with_bn == 'constraint_bn_v2':
+                    if idx == 0:
+                        layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+                    else:
+                        layers += [Constraint_Norm2d(in_channels, pre_affine=True, post_affine=True),
+                                   #Constraint_Affine2d(in_channels),
+                                   nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+                elif with_bn == 'constraint_bn_v3':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                Constraint_Norm2d(x, pre_affine=True, post_affine=True),
+                                nn.ReLU(inplace=True)]
+                elif with_bn =='gn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                nn.GroupNorm(32, x, affine=True),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'constraint_bn_v2_no_affine':
+                    if idx == 0:
+                        layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+                    else:
+                        layers += [Constraint_Norm2d(in_channels, pre_affine=False, post_affine=False),
+                                   #Constraint_Affine2d(in_channels),
+                                   nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                                   nn.ReLU(inplace=True)]
+
+                elif with_bn == 'in':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               InstanceNorm2d(x, affine=True),
+                               nn.ReLU(inplace=True),]
+
+                else:
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               nn.ReLU(inplace=True)]
+                in_channels = x
+        layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
+        return nn.Sequential(*layers)
 
 
-cfgs = {
-    'A': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-    'B': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
-    'D': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'M', 512, 512, 512, 'M', 512, 512, 512, 'M'],
-    'E': [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 256, 'M', 512, 512, 512, 512, 'M', 512, 512, 512, 512, 'M'],
-}
+def vgg16(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn=False)
 
 
-def _vgg(arch, cfg, batch_norm, pretrained, progress, **kwargs):
-    if pretrained:
-        kwargs['init_weights'] = False
-    model = VGG(make_layers(cfgs[cfg], batch_norm=batch_norm), **kwargs)
-    return model
+def vgg500(num_classes=10):
+    return VGG('VGG500', num_classes=num_classes, with_bn=False)
 
 
-def vgg11(pretrained=False, progress=True, **kwargs):
-    r"""VGG 11-layer model (configuration "A") from
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg11', 'A', False, pretrained, progress, **kwargs)
+def vgg50(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn=False)
+def vgg25(num_classes=10):
+    return VGG('VGG25', num_classes=num_classes, with_bn=False)
 
 
-def vgg11_bn(pretrained=False, progress=True, **kwargs):
-    r"""VGG 11-layer model (configuration "A") with batch normalization
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
+def vgg500_bn(num_classes=10):
+    return VGG('VGG500', num_classes=num_classes, with_bn='bn')
+def vgg50_bn(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn='bn')
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg11_bn', 'A', True, pretrained, progress, **kwargs)
+def vgg50_constraint_bn_v2(num_classes=10):
+    return VGG('VGG50', num_classes=num_classes, with_bn='constraint_bn_v2')
 
+def vgg25_constraint_bn_v2(num_classes=10):
+    return VGG('VGG25', num_classes=num_classes, with_bn='constraint_bn_v2')
 
-def vgg13(pretrained=False, progress=True, **kwargs):
-    r"""VGG 13-layer model (configuration "B")
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
+def vgg16_bn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn')
+def vgg16_bn_moving_average(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
+def vgg16_pn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn_population')
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg13', 'B', False, pretrained, progress, **kwargs)
+def vgg16_in(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='in')
 
-
-def vgg13_bn(pretrained=False, progress=True, **kwargs):
-    r"""VGG 13-layer model (configuration "B") with batch normalization
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg13_bn', 'B', True, pretrained, progress, **kwargs)
+def vgg16_gn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='gn')
 
 
-def vgg16(pretrained=False, progress=True, **kwargs):
-    r"""VGG 16-layer model (configuration "D")
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg16', 'D', False, pretrained, progress, **kwargs)
+def vgg16_brn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='brn')
 
 
-def vgg16_bn(pretrained=False, progress=True, **kwargs):
-    r"""VGG 16-layer model (configuration "D") with batch normalization
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
+def vgg16_dual_bn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='dual')
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg16_bn', 'D', True, pretrained, progress, **kwargs)
+def vgg16_constraint_bn_v2(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v2')
 
-
-def vgg19(pretrained=False, progress=True, **kwargs):
-    r"""VGG 19-layer model (configuration "E")
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg19', 'E', False, pretrained, progress, **kwargs)
+def vgg16_constraint_bn_v3(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v3')
 
 
-def vgg19_bn(pretrained=False, progress=True, **kwargs):
-    r"""VGG 19-layer model (configuration 'E') with batch normalization
-    `"Very Deep Convolutional Networks For Large-Scale Image Recognition" <https://arxiv.org/pdf/1409.1556.pdf>`_
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return _vgg('vgg19_bn', 'E', True, pretrained, progress, **kwargs)
+
+def vgg16_constraint_bn_v2_noaffine(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='constraint_bn_v2_no_affine')
+# net = VGG('VGG11')
+# x = torch.randn(2,3,32,32)
+# print(net(Variable(x)).size())

@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 python -m torch.distributed.launch --nproc_per_node=$1 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 8 --opt-level O1  \
     ./data/imagenet --sync_bn \
     --log_dir imagenet/constraint_20_weight_1e-3_ind_1e-1 \
@@ -7,6 +8,9 @@ python -m torch.distributed.launch --nproc_per_node=$1 main_amp_constraint.py -a
     --lambda_constraint_weight 0.001 \
 =======
 python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3222 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 8 --opt-level O1  \
+=======
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3122 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 8 --opt-level O1  \
+>>>>>>> 0bd4c660cccd3b5a9943e3865ba98c02a4a553d9
     ./data/imagenet \
     --log_dir imagenet/constraint_18_1e-3_ind_1e-1 \
     --constraint_lr 0.01 \
