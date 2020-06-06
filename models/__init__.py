@@ -26,3 +26,4 @@ from .resnet_constraintbn_aka import *
 #from .resnet_constraintbn_aka_v2 import *
 from .resnet_aka_nobn import *
 from .resnet_aka_gn import *
+from .resnet_v1 import *
