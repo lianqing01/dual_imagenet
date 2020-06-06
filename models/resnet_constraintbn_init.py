@@ -51,8 +51,6 @@ class BasicBlock(nn.Module):
         self.conv2 = conv3x3(planes, planes)
         self.bn2 = norm_layer(planes)
         self.bn3 = norm_layer(planes)
-        self.bias2b = nn.Parameter(torch.zeros(1))
-        self.bias1a = nn.Parameter(torch.zeros(1))
 
         self.downsample = downsample
         self.stride = stride
@@ -68,7 +66,7 @@ class BasicBlock(nn.Module):
         out = self.bn3(out)
 
         if self.downsample is not None:
-            identity = self.downsample(x + self.bias1a)
+            identity = self.downsample(x)
 
         out += identity
         out = self.relu(out)
@@ -170,7 +168,7 @@ class resnet_constraint_init(nn.Module):
                 m.bias.data.fill_(0)
         for m in self.modules():
             if isinstance(m, BasicBlock):
-                m.bn2.post_affine_layer.u_.data.fill_(1/float(sqrt(8)))
+                m.bn3.post_affine_layer.u_.data.fill_(1/float(sqrt(8)))
                 #m.conv2.weight.data.fill_(0)
 
         # Zero-initialize the last BN in each residual branch,
