@@ -2,11 +2,8 @@ import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
 
-from .group_norm import GroupNorm
 
-__all__ = ['resnetgn_50', 'resnetgn_18', 'resnetgn_34']
-
-
+__all__ = ['ResNet', 'resnet50', 'resnet101']
 
 
 def conv3x3(in_planes, out_planes, stride=1):
@@ -21,12 +18,12 @@ class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = GroupNorm(32, planes)
+        self.bn1 = nn.GroupNorm(32, planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=1, bias=False)
-        self.bn2 = GroupNorm(32, planes)
+        self.bn2 = nn.GroupNorm(32, planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-        self.bn3 = GroupNorm(32, planes * 4)
+        self.bn3 = nn.GroupNorm(32, planes * 4)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -64,7 +61,7 @@ def conv2d_init(m):
     m.weight.data.normal_(0, math.sqrt(2. / n))
 
 def gn_init(m, zero_init=False):
-    assert isinstance(m, GroupNorm)
+    assert isinstance(m, nn.GroupNorm)
     m.weight.data.fill_(0. if zero_init else 1.)
     m.bias.data.zero_()
 
@@ -74,17 +71,16 @@ class ResNet(nn.Module):
     def __init__(self, block, layers, num_classes=1000):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1,
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
-        self.bn1 = GroupNorm(32, 64)
+        self.bn1 = nn.GroupNorm(32, 64)
         self.relu = nn.ReLU(inplace=True)
-        #self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
+        self.avgpool = nn.AvgPool2d(7, stride=1)
         self.fc = nn.Linear(512 * block.expansion, num_classes)
 
         for m in self.modules():
@@ -98,10 +94,10 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride, bias=False),
-                GroupNorm(32, planes * block.expansion),
+                nn.GroupNorm(32, planes * block.expansion),
             )
             m = downsample[1]
-            assert isinstance(m, GroupNorm)
+            assert isinstance(m, nn.GroupNorm)
             gn_init(m)
 
         layers = []
@@ -116,7 +112,7 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        #x = self.maxpool(x)
+        x = self.maxpool(x)
 
         x = self.layer1(x)
         x = self.layer2(x)
@@ -129,33 +125,8 @@ class ResNet(nn.Module):
 
         return x
 
-def resnetgn_18(pretrained=False, progress=True, **kwargs):
-    r"""ResNet-18 model from
-    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return ResNet('resnet18', BasicBlock, [2, 2, 2, 2], pretrained, progress,
-                   **kwargs)
-
-
-def resnetgn_34(pretrained=False, progress=True, **kwargs):
-    r"""ResNet-34 model from
-    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
-
-    Args:
-        pretrained (bool): If True, returns a model pre-trained on ImageNet
-        progress (bool): If True, displays a progress bar of the download to stderr
-    """
-    return ResNet('resnet34', BasicBlock, [3, 4, 6, 3], pretrained, progress,
-                   **kwargs)
-
-
-
-
-def resnetgn_50(**kwargs):
+def resnet50(**kwargs):
     model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
     return model
 

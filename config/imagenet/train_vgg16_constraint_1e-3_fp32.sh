@@ -1,7 +1,6 @@
-python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3622 main_amp_constraint.py -a vgg_imagenet16_constraint --b 256 --workers 8 --opt-level O2  \
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3622 main_amp_constraint.py -a vgg_imagenet16_constraint --b 128 --workers 8 --opt-level O1  \
     ./data/imagenet \
     --log_dir imagenet/vgg_imagenet16_constraint_1e-3 \
-    --lr 0.1 \
     --constraint_lr 0.005 \
     --constraint_decay 1 \
     --lambda_constraint_weight 1e-3 \
