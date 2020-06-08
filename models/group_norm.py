@@ -21,7 +21,6 @@ class GroupNorm(nn.Module):
         mean = x.mean(-1, keepdim=True)
         var = (x*x).mean(-1, keepdim=True) - mean ** 2
         var = torch.clamp(var, min=0)
-        var *= (H * W ) / float(H*W - 1)
 
         x = (x - mean) / (var + self.eps).sqrt()
         x = x.view(N, C, H, W)

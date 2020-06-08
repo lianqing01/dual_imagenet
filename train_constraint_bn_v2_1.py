@@ -175,7 +175,7 @@ if args.dataset == 'CIFAR10':
                             transform=transform_train)
     num_classes=10
 elif args.dataset == 'CIFAR100':
-    trainset = dataset.CIFAR100(root='~/data', train=True, download=True,
+    trainset = datasets.CIFAR100(root='~/data', train=True, download=True,
                             transform=transform_train)
     num_classes=100
 trainloader = torch.utils.data.DataLoader(trainset,
@@ -186,16 +186,18 @@ if args.dataset == 'CIFAR10':
     testset = datasets.CIFAR10(root='~/data', train=False, download=True,
                            transform=transform_test)
 elif args.dataset == 'CIFAR100':
-    testset = dataset.CIFAR100(root='~/data', train=False, download=True,
+    testset = datasets.CIFAR100(root='~/data', train=False, download=True,
                             transform=transform_test)
 
 testloader = torch.utils.data.DataLoader(testset, batch_size=100,
                                          shuffle=False, num_workers=2)
 
+print(num_classes)
+
 
 
 logger.info('==> Building model..')
-net = models.__dict__[args.model](num_classes=args.num_classes)
+net = models.__dict__[args.model](num_classes=num_classes)
 if use_cuda:
     net.cuda()
     logger.info(torch.cuda.device_count())

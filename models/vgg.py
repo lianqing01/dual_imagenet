@@ -1,13 +1,45 @@
 '''VGG11/13/16/19 in Pytorch.'''
 import torch
 import math
+import torch.nn.functional as F
 import torch.nn as nn
 from torch.autograd import Variable
 from .dual_norm import DualNorm
+from .MABN import MABN2d
 from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
 from .batchnorm import BatchNorm2d
 from .instancenorm import InstanceNorm2d
+from .batchrenorm import BatchRenorm2d
+import torch.nn.utils.weight_norm as weightNorm
+
+from .batch_renormalization import BatchRenormalization2D
+
+class Conv_Cen2d(nn.Module):
+    """Conv2d layer with Weight Centralization
+    """
+    def __init__(self, in_planes, out_planes, kernel_size=3, stride=1,
+                 padding=0, dilation=1, groups=1, bias=False):
+        super(Conv_Cen2d, self).__init__()
+        self.in_planes = in_planes
+        self.out_planes = out_planes
+        self.stride = stride
+        self.padding = padding
+        self.dilation = dilation
+        self.groups = groups
+        self.weight = nn.Parameter(torch.randn(out_planes, in_planes//groups, kernel_size, kernel_size))
+        if bias:
+            self.bias = nn.Parameter(torch.randn(out_planes))
+        else:
+            self.register_parameter('bias', None)
+
+    def forward(self, x):
+        weight = self.weight
+        weight_mean = weight.mean(dim=1, keepdim=True).mean(dim=2, keepdim=True).mean(dim=3, keepdim=True)
+        weight = weight - weight_mean
+        return F.conv2d(x, weight, self.bias, self.stride, self.padding, self.dilation, self.groups)
+
+
 
 
 cfg = {
@@ -76,6 +108,10 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                nn.BatchNorm2d(x),
                                nn.ReLU(inplace=True)]
+                elif with_bn == 'bn_v2':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               nn.ReLU(inplace=True),
+                               nn.BatchNorm2d(x)]
                 elif with_bn == 'bn_population':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                BatchNorm2d(x),
@@ -83,7 +119,7 @@ class VGG(nn.Module):
 
                 elif with_bn == 'brn':
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                               BatchRenorm2d(x, momentum=0.5),
+                               BatchRenorm2d(x),
                                nn.ReLU(inplace=True)]
 
                 elif with_bn == 'constraint_bn_v2':
@@ -117,6 +153,17 @@ class VGG(nn.Module):
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
                                InstanceNorm2d(x, affine=True),
                                nn.ReLU(inplace=True),]
+                elif with_bn == 'mabn':
+                    layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                               MABN2d(x),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'wn':
+                    layers += [weightNorm(nn.Conv2d(in_channels, x, kernel_size=3, padding=1, bias=True), name="weight"),
+                               nn.ReLU(inplace=True)]
+                elif with_bn == 'mabn_cen':
+                    layers += [Conv_Cen2d(in_channels, x, kernel_size=3, padding=1),
+                               MABN2d(x),
+                               nn.ReLU(inplace=True),]
 
                 else:
                     layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
@@ -128,6 +175,20 @@ class VGG(nn.Module):
 
 def vgg16(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn=False)
+
+
+def vgg16_mabn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='mabn')
+
+
+def vgg16_mabn_cen(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='mabn_cen')
+
+def vgg16_wn(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='wn')
+
+
+
 
 
 def vgg500(num_classes=10):
@@ -153,6 +214,10 @@ def vgg25_constraint_bn_v2(num_classes=10):
 
 def vgg16_bn(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn')
+
+def vgg16_bn_v2(num_classes=10):
+    return VGG('VGG16', num_classes=num_classes, with_bn='bn_v2')
+
 def vgg16_bn_moving_average(num_classes=10):
     return VGG('VGG16', num_classes=num_classes, with_bn='bn_moving_average')
 def vgg16_pn(num_classes=10):
