@@ -16,10 +16,6 @@ from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models
-<<<<<<< HEAD
-
-=======
->>>>>>> 4c208638aa08c9888c6d89d7761af8e26f190898
 import numpy as np
 
 def str2bool(v):
@@ -93,10 +89,7 @@ def parse():
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
     parser.add_argument('--grad_clip', default=3)
-<<<<<<< HEAD
-=======
     parser.add_argument('--mixed_precision', default=True, type=str2bool)
->>>>>>> c6ad7a25d188e2b4f825e44fad49c5b62aa2e763
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -179,7 +172,7 @@ def main():
     if args.sync_bn:
         import apex
         logger.info("using apex synced BN")
-        model = apex.parallel.convert_syncbn_model(model)
+        model = models.convert_syncbn_model(model)
 
     model = model.cuda()
 
@@ -194,7 +187,7 @@ def main():
     if args.mixed_precision:
         model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                      keep_batchnorm_fp32=False,
                                       loss_scale=args.loss_scale
                                       )
 
@@ -382,7 +375,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
         output = model(input)
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
         loss = criterion(output, target)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
 
         # compute gradient and do SGD step
@@ -395,7 +387,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         else:
             loss.backward()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        #torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
 
         # for param in model.parameters():
@@ -463,11 +455,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     if args.local_rank == 0:
         wandb.log({"train/acc_epoch": top1.avg}, step=epoch)
         wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
-<<<<<<< HEAD
         wandb.log({"train/loss_epoch": losses.avg}, step=epoch)
-=======
-        wandb.log({"train/loss_epoch": losses.avg},  step=epoch)
->>>>>>> 4c208638aa08c9888c6d89d7761af8e26f190898
 
 def validate(epoch, val_loader, model, criterion):
     batch_time = AverageMeter()
@@ -525,16 +513,9 @@ def validate(epoch, val_loader, model, criterion):
 
         input, target = prefetcher.next()
     if args.local_rank == 0:
-<<<<<<< HEAD
         wandb.log({"test/acc_epoch": top1.avg}, step=epoch)
         wandb.log({"test/acc5_epoch": top5.avg}, step=epoch)
         wandb.log({"test/loss_epoch": losses.avg}, step=epoch)
-=======
-        wandb.log({"test/acc_epoch": top1.avg},  step=epoch)
-        wandb.log({"test/acc5_epoch": top5.avg},  step=epoch)
-
-        wandb.log({"test/loss_epoch": losses.avg}, step= epoch)
->>>>>>> 4c208638aa08c9888c6d89d7761af8e26f190898
 
     logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
