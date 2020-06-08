@@ -32,6 +32,7 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
 from models.batchnorm import BatchNorm2d
+from models.group_norm import GroupNorm
 
 def str2bool(v):
         if isinstance(v, bool):
@@ -84,10 +85,10 @@ parser.add_argument('--dataset', default='CIFAR10', type=str)
 parser.add_argument('--print_freq', default=10, type=int)
 
 # for noise
-parser.add_argument('--sample_mean_mean', default=0, type=float)
-parser.add_argument('--sample_mean_var', default=0, type=float)
-parser.add_argument('--sample_std_mean', default=0, type=float)
-parser.add_argument('--sample_std_var', default=0, type=float)
+parser.add_argument('--noise_mean_mean', default=0, type=float)
+parser.add_argument('--noise_mean_var', default=0, type=float)
+parser.add_argument('--noise_mean_std', default=0, type=float)
+parser.add_argument('--noise_var_std', default=0, type=float)
 parser.add_argument('--after_x', default="version_1", type=str)
 
 
@@ -418,17 +419,18 @@ if use_cuda:
     device = torch.device("cuda")
 print(args.data_dependent)
 for m in net.modules():
-    if isinstance(m, BatchNorm2d) or isinstance(m, BatchRenorm2d):
+    if isinstance(m, BatchNorm2d) or isinstance(m, BatchRenorm2d) or isinstance(m, GroupNorm):
         m.sample_noise = args.sample_noise
         m.data_dependent = args.data_dependent
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
-        m.sample_mean = torch.zeros(m.num_features).to(device)
-        m.sample_mean_mean = torch.zeros(m.num_features).fill_(args.sample_mean_mean).to(device)
-        m.sample_mean_var = torch.zeros(m.num_features).fill_(args.sample_mean_var).to(device)
-        m.sample_std_mean = torch.sqrt(torch.Tensor([args.sample_std_mean])[0].to(device))
-        m.sample_std_var = torch.sqrt(torch.Tensor([args.sample_std_var])[0].to(device))
-        m.after_x = args.after_x
+        m.noise_mean = torch.zeros(m.num_features).to(device)
+        m.noise_mean_var = torch.zeros(m.num_features).fill_(args.noise_mean_var).to(device)
+        m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+        m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
+        if isinstance(m, GroupNorm):
+            m.noise_mean = torch.ones([args.batch_size, m.num_groups, 1]).to(device)
+
 
         m.r_max = args.r_max
         m.batch_renorm = args.batch_renorm

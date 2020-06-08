@@ -405,6 +405,19 @@ def main():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
             break
+    device = torch.device("cuda")
+
+    for m in model.modules():
+        if isinstance(m, Constraint_Norm):
+            m.sample_noise = args.sample_noise
+            m.noise_data_dependent = args.noise_data_dependent
+            m.noise_std = torch.sqrt(torch.Tensor([args.noise_std])[0].to(device))
+            m.sample_mean = torch.zeros(m.num_features).to(device)
+            m.add_grad_noise = args.add_grad_noise
+            m.lambda_noise_weight = args.lambda_noise_weight
+            m.add_noise = args.add_noise
+            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
