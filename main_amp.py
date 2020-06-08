@@ -22,6 +22,17 @@ import models
 >>>>>>> 4c208638aa08c9888c6d89d7761af8e26f190898
 import numpy as np
 
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
 try:
     from apex.parallel import DistributedDataParallel as DDP
     from apex.fp16_utils import *
@@ -82,6 +93,10 @@ def parse():
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
     parser.add_argument('--grad_clip', default=3)
+<<<<<<< HEAD
+=======
+    parser.add_argument('--mixed_precision', default=True, type=str2bool)
+>>>>>>> c6ad7a25d188e2b4f825e44fad49c5b62aa2e763
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -176,7 +191,8 @@ def main():
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
-    model, optimizer = amp.initialize(model, optimizer,
+    if args.mixed_precision:
+        model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
                                       keep_batchnorm_fp32=args.keep_batchnorm_fp32,
                                       loss_scale=args.loss_scale
@@ -366,13 +382,18 @@ def train(train_loader, model, criterion, optimizer, epoch):
         output = model(input)
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
         loss = criterion(output, target)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
 
         if args.prof >= 0: torch.cuda.nvtx.range_push("backward")
-        with amp.scale_loss(loss, optimizer) as scaled_loss:
-            scaled_loss.backward()
+        if args.mixed_precision:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
