@@ -8,6 +8,7 @@ from __future__ import print_function
 from comet_ml import Experiment
 
 import argparse
+from models.batchrenorm import BatchRenorm2d
 import os.path as osp
 import time
 import csv
@@ -31,6 +32,7 @@ from torch.utils.tensorboard import SummaryWriter
 from utils import progress_bar, AverageMeter
 from utils import create_logger
 from models.batchnorm import BatchNorm2d
+from models.group_norm import GroupNorm
 
 def str2bool(v):
         if isinstance(v, bool):
@@ -52,7 +54,7 @@ parser.add_argument('--load_model', type=str, default='')
 parser.add_argument('--name', default='0', type=str, help='name of run')
 parser.add_argument('--seed', default=0, type=int, help='random seed')
 parser.add_argument('--batch-size', default=128, type=int, help='batch size')
-parser.add_argument('--pn-batch-size', default=10000, type=int, help='batch size')
+parser.add_argument('--pn-batch-size', default=128, type=int, help='batch size')
 
 parser.add_argument('--epoch', default=200, type=int,
                     help='total epochs to run')
@@ -62,7 +64,7 @@ parser.add_argument('--decay', default=1e-4, type=float, help='weight decay')
 parser.add_argument('--alpha', default=1., type=float,
                     help='mixup interpolation coefficient (default: 1)')
 parser.add_argument('--log_dir', default="oracle_exp001")
-parser.add_argument('--grad_clip', default=3)
+parser.add_argument('--grad_clip', default=1)
 # for lr scheduler
 parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
 parser.add_argument('--schedule', default=[100,150])
@@ -83,10 +85,10 @@ parser.add_argument('--dataset', default='CIFAR10', type=str)
 parser.add_argument('--print_freq', default=10, type=int)
 
 # for noise
-parser.add_argument('--sample_mean_mean', default=0, type=float)
-parser.add_argument('--sample_mean_var', default=0, type=float)
-parser.add_argument('--sample_std_mean', default=0, type=float)
-parser.add_argument('--sample_std_var', default=0, type=float)
+parser.add_argument('--noise_mean_mean', default=0, type=float)
+parser.add_argument('--noise_mean_var', default=0, type=float)
+parser.add_argument('--noise_mean_std', default=0, type=float)
+parser.add_argument('--noise_var_std', default=0, type=float)
 parser.add_argument('--after_x', default="version_1", type=str)
 
 
@@ -317,17 +319,6 @@ def train(epoch):
             #experiment.log_metric("acc_step", acc.avg, curr_idx)
             #wandb.log({"train_loss": train_loss.avg}, step=curr_idx)
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
-    mean_stat = []
-    layer = 0
-    for m in net.modules():
-        if isinstance(m, BatchNorm2d):
-            mean = m.mean
-            mean_var = m.sample_mean_var
-            var = m.var
-            var_var = m.sample_var_var
-            mean_stat.append([mean, mean_var, var, var_var])
-    import pdb
-    pdb.set_trace()
 
 
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
@@ -428,17 +419,18 @@ if use_cuda:
     device = torch.device("cuda")
 print(args.data_dependent)
 for m in net.modules():
-    if isinstance(m, BatchNorm2d):
+    if isinstance(m, BatchNorm2d) or isinstance(m, BatchRenorm2d) or isinstance(m, GroupNorm):
         m.sample_noise = args.sample_noise
         m.data_dependent = args.data_dependent
         m.noise_bsz = torch.Tensor([args.noise_bsz])[0].to(device)
         m.noise_std = torch.Tensor([args.noise_std])[0].to(device)
-        m.sample_mean = torch.zeros(m.num_features).to(device)
-        m.sample_mean_mean = torch.zeros(m.num_features).fill_(args.sample_mean_mean).to(device)
-        m.sample_mean_var = torch.zeros(m.num_features).fill_(args.sample_mean_var).to(device)
-        m.sample_std_mean = torch.Tensor([args.sample_std_mean])[0].to(device)
-        m.sample_std_var = torch.Tensor([args.sample_std_var])[0].to(device)
-        m.after_x = args.after_x
+        m.noise_mean = torch.zeros(m.num_features).to(device)
+        m.noise_mean_var = torch.zeros(m.num_features).fill_(args.noise_mean_var).to(device)
+        m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+        m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
+        if isinstance(m, GroupNorm):
+            m.noise_mean = torch.ones([args.batch_size, m.num_groups, 1]).to(device)
+
 
         m.r_max = args.r_max
         m.batch_renorm = args.batch_renorm

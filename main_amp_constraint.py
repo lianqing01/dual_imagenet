@@ -405,6 +405,15 @@ def main():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
             break
+    device = torch.device("cuda")
+
+    for m in model.modules():
+        if isinstance(m, Constraint_Norm):
+            m.sample_noise = args.sample_noise
+            m.sample_mean = torch.zeros(m.num_features).to(device)
+            m.add_noise = args.add_noise
+            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -656,8 +665,8 @@ def _reset(train_loader, model, criterion, optimizer, epoch):
                         else:
                             track_layer += 1
 
-
-            allreduce_params(model.parameters())
+            if args.world_size > 1:
+                allreduce_params(model.parameters())
             for m in model.modules():
                 if isinstance(m, Constraint_Norm):
                     m.reset_norm_statistics()
@@ -995,8 +1004,8 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                         else:
                             track_layer += 1
 
-
-            allreduce_params(model.parameters())
+            if args.world_size > 1:
+                allreduce_params(model.parameters())
             for m in model.modules():
                 if isinstance(m, Constraint_Norm):
                     m.reset_norm_statistics()

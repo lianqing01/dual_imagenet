@@ -29,3 +29,4 @@ from .resnet_aka_nobn import *
 from .resnet_aka_gn import *
 from .resnet_v1 import *
 from .resnet_constraintbn_init_v2 import *
+from .resnet_aka_brn import *

@@ -132,16 +132,16 @@ class _BatchNorm(_NormBase):
 
                             sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
                             sample_mean_var *= (group) / max(float(group - 1), 1)
-                            self.mean = mean
-                            self.sample_mean_var = sample_mean_var
+                            self.sample_mean_var *= 0.9
+                            self.sample_mean_var += 0.1 * sample_mean_var
                             #sample_mean_var[sample_mean_var<0] = 0
                             sample_mean_var = torch.clamp(sample_mean_var, min=0)
                             sample_mean_std = torch.sqrt(sample_mean_var)
                             #sample std var
                             sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
                             sample_var_var *= (group) / max(float(group - 1), 1)
-                            self.var = var
-                            self.sample_var_var = sample_var_var
+                            self.sample_var_var *= 0.9
+                            self.sample_var_var += 0.1 * sample_var_var
                             #sample_std_var[sample_std_var<0] = 0
                             sample_var_var = torch.clamp(sample_var_var, min=0)
 
