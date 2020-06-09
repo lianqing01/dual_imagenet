@@ -25,7 +25,7 @@ for i in range(len(args.noise)):
     --noise_var_std {} \
     --grad_clip 1 \
     --sample_noise True \
-    --decrease_affine_lr 0.1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i])
+    --decrease_affine_lr 1".format(args.gpus[i], args.model, args.noise[i], args.noise[i], args.noise[i])
     print(script)
     gpu_script = "export CUDA_VISIBLE_DEVICES={}".format(args.gpus[i])
     subprocess.Popen(gpu_script, shell=True)

@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
+from models.group_norm import GroupNorm
 from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -99,6 +100,10 @@ def parse():
     parser.add_argument('--sync_bn', action='store_true',
                         help='enabling apex sync BN.')
 
+    parser.add_argument('--sample_noise', default=False)
+    parser.add_argument('--noise_mean_std', default=0, type=float)
+    parser.add_argument('--noise_var_std', default=0, type=float)
+
     parser.add_argument('--opt-level', type=str)
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
     parser.add_argument('--loss-scale', type=str, default=None)
@@ -172,7 +177,7 @@ def main():
     if args.sync_bn:
         import apex
         logger.info("using apex synced BN")
-        model = apex.parallel.convert_syncbn_model(model)
+        model = models.convert_syncbn_model(model)
 
     model = model.cuda()
 
@@ -187,7 +192,7 @@ def main():
     if args.mixed_precision:
         model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                      keep_batchnorm_fp32=False,
                                       loss_scale=args.loss_scale
                                       )
 
@@ -269,6 +274,17 @@ def main():
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
+    from models import SyncBatchNorm
+    device = torch.device("cuda")
+    for m in model.modules():
+        if isinstance(m, GroupNorm) or isinstance(m, SyncBatchNorm):
+            m.sample_noise = args.sample_noise
+            m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
+            m.noise_mean = torch.ones([m.num_features]).to(device).half()
+            if isinstance(m, GroupNorm):
+                m.noise_mean = torch.ones([args.batch_size, m.num_groups, 1]).to(device).half()
+
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -375,7 +391,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
         output = model(input)
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
         loss = criterion(output, target)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
 
         # compute gradient and do SGD step
@@ -388,6 +403,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         else:
             loss.backward()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+
 
         # for param in model.parameters():
         #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
@@ -454,7 +471,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     if args.local_rank == 0:
         wandb.log({"train/acc_epoch": top1.avg}, step=epoch)
         wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
-        wandb.log({"train/loss_epoch": losses.avg},  step=epoch)
+        wandb.log({"train/loss_epoch": losses.avg}, step=epoch)
 
 def validate(epoch, val_loader, model, criterion):
     batch_time = AverageMeter()
@@ -512,10 +529,9 @@ def validate(epoch, val_loader, model, criterion):
 
         input, target = prefetcher.next()
     if args.local_rank == 0:
-        wandb.log({"test/acc_epoch": top1.avg},  step=epoch)
-        wandb.log({"test/acc5_epoch": top5.avg},  step=epoch)
-
-        wandb.log({"test/loss_epoch": losses.avg}, step= epoch)
+        wandb.log({"test/acc_epoch": top1.avg}, step=epoch)
+        wandb.log({"test/acc5_epoch": top5.avg}, step=epoch)
+        wandb.log({"test/loss_epoch": losses.avg}, step=epoch)
 
     logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
