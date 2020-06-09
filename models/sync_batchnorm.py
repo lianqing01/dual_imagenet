@@ -61,6 +61,7 @@ class SyncBatchNorm(_BatchNorm):
 
         super(SyncBatchNorm, self).__init__(num_features, eps=eps, momentum=momentum, affine=affine, track_running_stats=track_running_stats)
         self.process_group = process_group
+        self.num_features = num_features
 
     def _specify_process_group(self, process_group):
         self.process_group = process_group
@@ -130,6 +131,13 @@ class SyncBatchNorm(_BatchNorm):
                         (m-1) * self.momentum * var + \
                         (1 - self.momentum) * self.running_var
             torch.cuda.nvtx.range_pop()
+            if self.sample_noise and self.training:
+                noise_mean = torch.normal(self.noise_mean, self.noise_mean_std).clamp(min=1e-2, max=5)
+                noise_var = torch.normal(self.noise_mean, self.noise_var_std).clamp(min=1e-2, max=5)
+                torch.distributed.broadcast(noise_mean, src=0)
+                torch.distributed.broadcast(noise_var, src=0)
+                mean = mean * noise_mean.detach()
+                var = var * noise_var.detach()
             out = SyncBatchnormFunction.apply(input, self.weight, self.bias, mean, var, self.eps, process_group, world_size)
         return out.to(cast)
 def convert_syncbn_model(module, process_group=None, channel_last=False):

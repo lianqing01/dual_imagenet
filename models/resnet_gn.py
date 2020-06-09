@@ -1,6 +1,7 @@
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
+from .group_norm import GroupNorm
 
 
 __all__ = ['ResNet', 'resnet50', 'resnet101']
@@ -18,12 +19,12 @@ class Bottleneck(nn.Module):
     def __init__(self, inplanes, planes, stride=1, downsample=None):
         super(Bottleneck, self).__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
-        self.bn1 = nn.GroupNorm(32, planes)
+        self.bn1 = GroupNorm(32, planes)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
                                padding=1, bias=False)
-        self.bn2 = nn.GroupNorm(32, planes)
+        self.bn2 = GroupNorm(32, planes)
         self.conv3 = nn.Conv2d(planes, planes * 4, kernel_size=1, bias=False)
-        self.bn3 = nn.GroupNorm(32, planes * 4)
+        self.bn3 = GroupNorm(32, planes * 4)
         self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
         self.stride = stride
@@ -61,7 +62,7 @@ def conv2d_init(m):
     m.weight.data.normal_(0, math.sqrt(2. / n))
 
 def gn_init(m, zero_init=False):
-    assert isinstance(m, nn.GroupNorm)
+    assert isinstance(m, GroupNorm)
     m.weight.data.fill_(0. if zero_init else 1.)
     m.bias.data.zero_()
 
@@ -73,7 +74,7 @@ class ResNet(nn.Module):
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
-        self.bn1 = nn.GroupNorm(32, 64)
+        self.bn1 = GroupNorm(32, 64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
@@ -94,10 +95,10 @@ class ResNet(nn.Module):
             downsample = nn.Sequential(
                 nn.Conv2d(self.inplanes, planes * block.expansion,
                           kernel_size=1, stride=stride, bias=False),
-                nn.GroupNorm(32, planes * block.expansion),
+                GroupNorm(32, planes * block.expansion),
             )
             m = downsample[1]
-            assert isinstance(m, nn.GroupNorm)
+            assert isinstance(m, GroupNorm)
             gn_init(m)
 
         layers = []

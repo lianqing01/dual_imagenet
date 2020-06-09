@@ -12,6 +12,7 @@ import torch.distributed as dist
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
+from models.group_norm import GroupNorm
 from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
@@ -98,6 +99,10 @@ def parse():
     parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument('--sync_bn', action='store_true',
                         help='enabling apex sync BN.')
+
+    parser.add_argument('--sample_noise', default=False)
+    parser.add_argument('--noise_mean_std', default=0, type=float)
+    parser.add_argument('--noise_var_std', default=0, type=float)
 
     parser.add_argument('--opt-level', type=str)
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
@@ -269,6 +274,17 @@ def main():
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
+    from models import SyncBatchNorm
+    device = torch.device("cuda")
+    for m in model.modules():
+        if isinstance(m, GroupNorm) or isinstance(m, SyncBatchNorm):
+            m.sample_noise = args.sample_noise
+            m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
+            m.noise_mean = torch.ones([m.num_features]).to(device).half()
+            if isinstance(m, GroupNorm):
+                m.noise_mean = torch.ones([args.batch_size, m.num_groups, 1]).to(device).half()
+
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -387,7 +403,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         else:
             loss.backward()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
-        #torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
 
         # for param in model.parameters():
