@@ -3,7 +3,7 @@ python -m torch.distributed.launch --nproc_per_node=$1 --master_port=3222 main_a
     --log_dir imagenet/constraint_18_5e-2_ind_5e-2 \
     --constraint_lr 0.01 \
     --constraint_decay 1 \
-    --lambda_constraint_weight 1e-3 \
+    --lambda_constraint_weight 2e-4 \
     --lambda_weight_mean 5 \
     --decrease_affine_lr 1 \
     --sample_noise True \

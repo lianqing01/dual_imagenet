@@ -143,7 +143,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=3)
+    parser.add_argument('--grad_clip', default=1.5)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -423,12 +423,14 @@ def main():
 
         '''
         if epoch % 1 == 0:
-            for p1, p2 in zip(model.parameters(), model_old.parameters()):
-                p2.data.copy_(p1.data)
             torch.cuda.synchronize()
             _reset(train_loader, model, criterion, optimizer, epoch)
+
+            for p1, p2 in zip(model.parameters(), model_old.parameters()):
+                p2.data.copy_(p1.data)
             get_momentum(train_loader, model,model_old, criterion, optimizer, epoch)
         '''
+
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
@@ -698,7 +700,7 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
     i = 0
     while input is not None:
         i += 1
-        if i > 10:
+        if i > 50:
             return None
 
 
@@ -718,16 +720,10 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
         for m in model.modules():
             if isinstance(m, Constraint_Lagrangian):
                 weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
-                weight_mean += weight_mean_
-                weight_var += weight_var_
-                weight_mean_abs += weight_mean_abs_
-                weight_var_abs += weight_var_abs_
+                weight_mean += args.lambda_weight_mean * args.lambda_constraint_weight * weight_mean_
+                weight_var += aegs.lambda_constraint_weight * weight_var_
 
-        constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
-        constraint_loss = args.lambda_constraint_weight * constraint_loss
-        weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
-        weight_var_abs = args.lambda_constraint_weight * weight_var_abs
+        constraint_loss = weight_mean + weight_var
 
         # optimize constraint loss
 
@@ -763,14 +759,6 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
             curr_idx = epoch * len(train_loader)+i
 
             # get the constraint weight
-            lambda_ = []
-            xi_ = []
-            for m in model.modules():
-                if isinstance(m, Constraint_Lagrangian):
-                    lambda_.append(m.lambda_.data.abs().mean())
-                    xi_.append(m.xi_.data.abs().mean())
-            lambda_ = torch.max(torch.stack(lambda_))
-            xi_ = torch.max(torch.stack(xi_))
 
 
             # Every print_freq iterations, check the loss, accuracy, and speed.
@@ -809,8 +797,6 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
                       'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
                       'Constraint mean {corat_mean:.4f}\t'
                       'Constraint var {corat_var:.4f}\t'
-                      'Constraint lambda {corat_lambda:.4f}\t'
-                      'Constraint xi {corat_xi:.4f}\t'
                       'mean {mean:.4f}\t'
                       'var {var:.4f}\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
@@ -821,8 +807,6 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
                        batch_time=batch_time,
                        corat_mean = -1 * weight_mean.item(),
                        corat_var = -1 * weight_var.item(),
-                       corat_lambda = lambda_,
-                       corat_xi = xi_,
                        mean = mean,
                        var = var,
                        loss=losses, top1=top1, top5=top5))
@@ -839,8 +823,6 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
         wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
         wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
         wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
-        wandb.log({"train/weight_mean(abs)": weight_mean_abs.item()},step=epoch)
-        wandb.log({"train/weight_var-1(abs)": weight_var_abs.item()}, step=epoch)
         wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
         wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
 
