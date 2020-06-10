@@ -193,6 +193,7 @@ def main():
     if args.mixed_precision:
         model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
+                                      keep_batchnorm_fp32=False,
                                       loss_scale=args.loss_scale
                                       )
 
