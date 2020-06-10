@@ -269,8 +269,7 @@ def train(epoch):
 
 
 
-        with torch.no_grad():
-            outputs = net(inputs)
+        outputs = net(inputs)
         loss = criterion(outputs[:args.batch_size], targets[:args.batch_size])
         train_loss.update(loss.data.item())
         _, predicted = torch.max(outputs[:args.batch_size].data, 1)
@@ -281,6 +280,8 @@ def train(epoch):
         train_loss_avg += loss.item()
 
         optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
         batch_time.update(time.time() - start)
         remain_iter = args.epoch * len(trainloader) - (epoch*len(trainloader) + batch_idx)
@@ -303,8 +304,13 @@ def train(epoch):
                     total=total,
                     remain_time=remain_time,
                         ))
-            import pdb
-            pdb.set_trace()
+            layer = 0
+            for m in net.modules():
+                if isinstance(m, BatchNorm2d):
+                    layer += 1
+                    print("layer: {}".format(layer))
+                    print("mean: {}, mean_var: {}, precentage: {}".format(m.mean.abs().mean(), m.sample_mean_var.abs().mean(), (m.sample_mean_var/m.mean).abs().mean()))
+                    print("var: {}, var_var: {}, precentage: {}".format(m.var.abs().mean(), m.sample_var_var.abs().mean(), (m.sample_var_var/m.var).abs().mean()))
 
         if (batch_idx+1) % args.print_freq == 0:
             curr_idx = epoch * len(trainloader) + batch_idx
