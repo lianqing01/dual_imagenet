@@ -132,10 +132,9 @@ class SyncBatchNorm(_BatchNorm):
                         (1 - self.momentum) * self.running_var
             torch.cuda.nvtx.range_pop()
             if self.sample_noise and self.training:
-                noise_mean = torch.normal(self.noise_mean, self.noise_mean_std).clamp(min=1e-2, max=5)
-                noise_var = torch.normal(self.noise_mean, self.noise_var_std).clamp(min=1e-2, max=5)
-                torch.distributed.broadcast(noise_mean, src=0)
-                torch.distributed.broadcast(noise_var, src=0)
+                noise_mean = torch.ones(mean.size()).cuda().half()
+                noise_mean = torch.normal(self.noise_mean, self.noise_mean_std).clamp(min=2e-1, max=5)
+                noise_var = torch.normal(self.noise_mean, self.noise_var_std).clamp(min=2e-1, max=5)
                 mean = mean * noise_mean.detach()
                 var = var * noise_var.detach()
             out = SyncBatchnormFunction.apply(input, self.weight, self.bias, mean, var, self.eps, process_group, world_size)
