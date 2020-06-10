@@ -1284,9 +1284,9 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 40
+    factor = epoch // 30
 
-    if epoch >= 80:
+    if epoch >= 60:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
