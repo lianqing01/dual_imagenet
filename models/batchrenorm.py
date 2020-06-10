@@ -56,19 +56,19 @@ class BatchRenorm(nn.Module):
         if self.training:
             batch_mean = x.mean(0)
             batch_std = torch.pow(x, 2).mean(0) - batch_mean.pow(2)
-            batch_std = batch_std.clamp(min=0)
+            batch_std = batch_std.clamp(min=self.eps)
             batch_std = torch.sqrt(batch_std)
             r = (
-                batch_std.detach() / self.running_std.view_as(batch_std)
-            ).clamp(1/self.rmax, self.rmax)
+                (batch_std.detach()+self.eps) / (self.running_std.view_as(batch_std) + self.eps
+            )).clamp(1/self.rmax, self.rmax)
             d = (
                 (batch_mean.detach() - self.running_mean.view_as(batch_mean))
-                / self.running_std.view_as(batch_std)
-            ).clamp(-self.dmax, self.dmax)
+                / (self.running_std.view_as(batch_std) + self.eps
+            )).clamp(-self.dmax, self.dmax)
             if self.sample_noise is True:
-                sample_mean = torch.ones([N,C]).half()
-                noise_mean = torch.normal(mean=sample_mean, std=self.sample_std_mean.detach())
-                noise_var = torch.normal(mean=sample_mean, std=self.sample_std_var.detach())
+                sample_mean = torch.ones([1,C]).half()
+                noise_mean = torch.normal(mean=sample_mean, std=self.sample_std_mean.detach()).clamp(min=0.3, max=3.3)
+                noise_var = torch.normal(mean=sample_mean, std=self.sample_std_var.detach()).clamp(min=0.3, max=3.3)
                 noise_var = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
                 noise_mean = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
                 r = unsqueeze_tensor(r)
@@ -82,7 +82,7 @@ class BatchRenorm(nn.Module):
                 d = unsqueeze_tensor(d)
             x = x.view(N, H, W, C)
 
-            x = (x - batch_mean) / batch_std * r + d
+            x = (x - batch_mean) / (batch_std+self.eps) * r + d
             self.running_mean += self.momentum * (
                 batch_mean.detach() - self.running_mean
             )
@@ -91,7 +91,9 @@ class BatchRenorm(nn.Module):
             )
             self.num_batches_tracked += 1
         else:
-            x = (x - self.running_mean) / self.running_std
+
+            x = x.view(N, H, W, C)
+            x = (x - self.running_mean) / (self.running_std + self.eps)
         if self.affine:
             x = self.weight * x + self.bias
         x = x.transpose(1, -1)
