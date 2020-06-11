@@ -305,12 +305,25 @@ def train(epoch):
                     remain_time=remain_time,
                         ))
             layer = 0
+            running_mean = []
+            running_var = []
+            running_mean_var = []
+            running_var_var = []
+            mean_per = []
+            var_per = []
             for m in net.modules():
                 if isinstance(m, BatchNorm2d):
-                    layer += 1
-                    print("layer: {}".format(layer))
-                    print("mean: {}, mean_var: {}, precentage: {}".format(m.mean.abs().mean(), m.sample_mean_var.abs().mean(), (m.sample_mean_var/m.mean).abs().mean()))
-                    print("var: {}, var_var: {}, precentage: {}".format(m.var.abs().mean(), m.sample_var_var.abs().mean(), (m.sample_var_var/m.var).abs().mean()))
+                    layer+=1
+                    running_mean.append(m.running_mean.abs().mean())
+                    running_var.append(m.running_var.abs().mean())
+                    running_mean_var.append(m.sample_mean_var.abs().mean())
+                    running_var_var.append(m.sample_var_var.abs().mean())
+                    mean_per.append((m.sample_mean_var / m.running_mean).abs().mean())
+                    var_per.append((m.sample_var_var / m.running_var).abs().mean())
+
+                    logger.info("layer: {} mean: {} mean_var: {} per: {}".format(layer, running_mean[-1], running_mean_var[-1], mean_per[-1]))
+                    logger.info("layer: {} var: {} var_var: {} per: {}".format(layer, running_var[-1], running_var_var[-1], var_per[-1]))
+
 
         if (batch_idx+1) % args.print_freq == 0:
             curr_idx = epoch * len(trainloader) + batch_idx
@@ -325,7 +338,16 @@ def train(epoch):
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
     wandb.log({"train/loss_epoch" : train_loss_avg/len(trainloader)}, step=epoch)
+    for i in range(len(running_mean)):
+        layer = i
+        wandb.log({"stat/mean{}".format(layer): running_mean[i]}, step=epoch)
+        wandb.log({"stat/mean_var{}".format(layer): running_mean_var[i]}, step=epoch)
+        wandb.log({"stat/var"+str(layer): running_var[i]}, step=epoch)
+        wandb.log({"stat/var_var"+str(layer): running_var_var[i]}, step=epoch)
+        wandb.log({"stat/mean_var_percentage"+str(layer): mean_per[i]}, step=epoch)
+        wandb.log({"stat/var_var_percentage"+str(layer): var_per[i]}, step=epoch)
 
+    torch.save( [running_mean, running_var, running_mean_var, running_var_var, mean_per, var_per], "{}_stat.pth".format(args.model))
     logger.info("epoch: {} acc: {}, loss: {}".format(epoch, 100.* correct/total, train_loss_avg / len(trainloader)))
     return (train_loss.avg, reg_loss.avg, 100.*correct/total)
 

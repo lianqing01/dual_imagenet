@@ -24,6 +24,8 @@ class _NormBase(Module):
         self.data_dependent = False
         self.sample_noise = False
         self.noise_bsz = 1000
+        self.sample_var_var = 0
+        self.sample_mean_var = 0
         self.sample_mean = None
         self.batch_renorm=False
         self.summarize_x = []

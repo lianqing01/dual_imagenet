@@ -321,6 +321,7 @@ def train(epoch):
             #wandb.log({"train_acc":acc.avg}, step=curr_idx)
 
 
+
     tb_logger.add_scalar("train/train_loss_epoch", train_loss_avg / len(trainloader), epoch)
     tb_logger.add_scalar("train/train_acc_epoch", 100.*correct/total, epoch)
     wandb.log({"train/acc_epoch" : 100.*correct/total}, step=epoch)
