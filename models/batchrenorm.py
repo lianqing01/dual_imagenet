@@ -1,10 +1,10 @@
 import torch
-
+import torch.nn as nn
 
 __all__ = ["BatchRenorm1d", "BatchRenorm2d", "BatchRenorm3d"]
 
 
-class BatchRenorm(torch.jit.ScriptModule):
+class BatchRenorm(nn.Module):
     def __init__(
         self,
         num_features: int,
@@ -37,38 +37,52 @@ class BatchRenorm(torch.jit.ScriptModule):
 
     def _check_input_dim(self, x: torch.Tensor) -> None:
         raise NotImplementedError()  # pragma: no cover
-
     @property
     def rmax(self) -> torch.Tensor:
-        return 10
+        return (2 / 35000 * self.num_batches_tracked + 25 / 35).clamp_(
+            1.0, 2.0
+        )
 
     @property
     def dmax(self) -> torch.Tensor:
-        return 10
-
+        return (5 / 20000 * self.num_batches_tracked - 25 / 20).clamp_(
+            0.0, 2.0
+        )
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         self._check_input_dim(x)
-        if x.dim() > 2:
-            x = x.transpose(1, -1)
+        N, C, H, W = x.size()
+        x = x.transpose(1, -1)
+        x = x.reshape(-1,C)
         if self.training:
-            dims = [i for i in range(x.dim() - 1)]
-            batch_mean = x.mean(dims)
-            batch_std = x.std(dims, unbiased=False) + self.eps
+            batch_mean = x.mean(0)
+            batch_std = torch.pow(x, 2).mean(0) - batch_mean.pow(2)
+            batch_std = batch_std.clamp(min=self.eps)
+            batch_std = torch.sqrt(batch_std)
             r = (
-                batch_std.detach() / self.running_std.view_as(batch_std)
-            )
+                (batch_std.detach()+self.eps) / (self.running_std.view_as(batch_std) + self.eps
+            )).clamp(1/self.rmax, self.rmax)
             d = (
                 (batch_mean.detach() - self.running_mean.view_as(batch_mean))
-                / self.running_std.view_as(batch_std)
-            )
+                / (self.running_std.view_as(batch_std) + self.eps
+            )).clamp(-self.dmax, self.dmax)
             if self.sample_noise is True:
-                noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_std_mean.detach())
-                noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_std_var.detach())
+                sample_mean = torch.ones([1,C]).half()
+                noise_mean = torch.normal(mean=sample_mean, std=self.sample_std_mean.detach()).clamp(min=0.3, max=3.3)
+                noise_var = torch.normal(mean=sample_mean, std=self.sample_std_var.detach()).clamp(min=0.3, max=3.3)
+                noise_var = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
+                noise_mean = unsqueeze_tensor(noise_var, 2).transpose(2, 0)
+                r = unsqueeze_tensor(r)
+                d = unsqueeze_tensor(d)
                 r *= noise_var.detach()
                 d *= noise_mean.detach()
-                r = r.detach()
-                d = d.detach()
-            x = (x - batch_mean) / batch_std * r + d
+                r = r.detach().clamp(1/self.rmax, self.rmax)
+                d = d.detach().clamp(-self.dmax, self.dmax)
+            else:
+                r = unsqueeze_tensor(r)
+                d = unsqueeze_tensor(d)
+            x = x.view(N, H, W, C)
+
+            x = (x - batch_mean) / (batch_std+self.eps) * r + d
             self.running_mean += self.momentum * (
                 batch_mean.detach() - self.running_mean
             )
@@ -77,13 +91,19 @@ class BatchRenorm(torch.jit.ScriptModule):
             )
             self.num_batches_tracked += 1
         else:
-            x = (x - self.running_mean) / self.running_std
+
+            x = x.view(N, H, W, C)
+            x = (x - self.running_mean) / (self.running_std + self.eps)
         if self.affine:
             x = self.weight * x + self.bias
-        if x.dim() > 2:
-            x = x.transpose(1, -1)
+        x = x.transpose(1, -1)
         return x
 
+
+def unsqueeze_tensor(x, num=3):
+    for _ in range(num):
+        x = x.unsqueeze(0)
+    return x
 
 class BatchRenorm1d(BatchRenorm):
     def _check_input_dim(self, x: torch.Tensor) -> None:

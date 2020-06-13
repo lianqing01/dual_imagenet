@@ -113,7 +113,7 @@ def parse():
                         ' (default: resmodel18)')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
+    parser.add_argument('--epochs', default=120, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
@@ -133,7 +133,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=1)
+    parser.add_argument('--grad_clip', default=3)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -144,7 +144,7 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=10, type=int)
+    parser.add_argument('--print_freq', default=100, type=int)
 
 
 
@@ -296,26 +296,6 @@ def main():
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay)
 
-    else:
-        origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, model.parameters())
-        if args.decrease_affine_lr is not None:
-            affine_lr = args.decrease_affine_lr * args.lr
-        else:
-            affine_lr = args.lr
-        args.affine_lr = affine_lr
-
-        optimizer = optim.SGD([
-                        {'params': origin_param},
-                        {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
-                                'lr': args.constraint_lr,
-                                'weight_decay': args.constraint_decay},
-                        {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, model.parameters()),
-                                'lr': affine_lr,
-                                'weight_decay': args.affine_weight_decay,
-                                'momentum': args.affine_momentum}
-                        ],
-                        lr=args.lr, momentum=0.9,
-                        weight_decay=args.decay)
 
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
@@ -343,11 +323,9 @@ def main():
     # Optionally resume from a checkpoint
     if args.resume:
         # Use a local scope to avoid dangling references
-
         def resume():
             if os.path.isfile(args.resume):
                 logger.info("=> loading checkpoint '{}'".format(args.resume))
-                checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
@@ -355,7 +333,6 @@ def main():
                 optimizer.load_state_dict(checkpoint['optimizer'])
                 logger.info("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
-
             else:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
         resume()
@@ -411,21 +388,7 @@ def main():
     #initialization
     with torch.no_grad():
         print("===initializtion====")
-    device = torch.device("cuda")
-
-    for m in model.modules():
-        if isinstance(m, Constraint_Norm):
-            m.sample_noise = args.sample_noise
-            m.noise_data_dependent = args.noise_data_dependent
-            m.noise_std = torch.sqrt(torch.Tensor([args.noise_std])[0].to(device))
-            m.sample_mean = torch.zeros(m.num_features).to(device)
-            m.add_grad_noise = args.add_grad_noise
-            m.lambda_noise_weight = args.lambda_noise_weight
-            m.add_noise = args.add_noise
-            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
-            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
-
-
+        _initialize(train_loader, model, criterion, optimizer, 0)
     for m in model.modules():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
@@ -754,6 +717,8 @@ def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
 
         with amp.scale_loss(loss, optimizer) as scaled_loss:
             scaled_loss.backward()
+        grads = [p.grad.max() for p in model.parameters()]
+        grads = torch.stack(grads).max()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -1284,9 +1249,9 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 30
+    factor = epoch // 40
 
-    if epoch >= 60:
+    if epoch >= 100:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)

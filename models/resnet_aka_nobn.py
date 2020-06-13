@@ -129,7 +129,7 @@ def resnet_nobn44(num_classes=10):
 
 
 def resnet_nobn56(num_classes=10):
-    return resnet_nobn(BasicBlock, [9, 9, 9])
+    return resnet_nobn(BasicBlock, [9, 9, 9], num_classes)
 
 
 def resnet_nobn110(num_classes):

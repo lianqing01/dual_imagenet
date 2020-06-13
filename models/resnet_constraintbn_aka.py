@@ -34,6 +34,7 @@ import torch.nn.init as init
 
 from torch.autograd import Variable
 from .constraint_bn_v2 import *
+from math import sqrt
 
 __all__ = ['resnet_constraint', 'resnet_constraint20', 'resnet_constraint32', 'resnet_constraint44', 'resnet_constraint56', 'resnet_constraint110', 'resnet_constraint1202']
 
@@ -100,6 +101,12 @@ class resnet_constraint(nn.Module):
         self.linear = nn.Linear(64, num_classes)
 
         self.apply(_weights_init)
+        num_residual = sum(num_blocks)
+        for m in self.modules():
+            if isinstance(m, BasicBlock):
+                m.bn2.post_affine_layer.u_.data.fill_(1/sqrt(num_residual))
+
+
 
     def _make_layer(self, block, planes, num_blocks, stride):
         strides = [stride] + [1]*(num_blocks-1)
@@ -136,7 +143,7 @@ def resnet_constraint44():
 
 
 def resnet_constraint56(num_classes=10):
-    return resnet_constraint(BasicBlock, [9, 9, 9])
+    return resnet_constraint(BasicBlock, [9, 9, 9], num_classes)
 
 
 def resnet_constraint110(num_classes=10):

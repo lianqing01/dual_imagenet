@@ -5,6 +5,7 @@ import time
 
 import wandb
 import torch
+from models.batchrenorm import BatchRenorm2d
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
@@ -277,7 +278,7 @@ def main():
     from models import SyncBatchNorm
     device = torch.device("cuda")
     for m in model.modules():
-        if isinstance(m, GroupNorm) or isinstance(m, SyncBatchNorm):
+        if isinstance(m, GroupNorm) or isinstance(m, SyncBatchNorm) or isinstance(m, BatchRenorm2d):
             m.sample_noise = args.sample_noise
             m.noise_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
             m.noise_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))

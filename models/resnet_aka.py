@@ -131,7 +131,7 @@ def resnet44(num_classes=10):
 
 
 def resnet56(num_classes=10):
-    return ResNet(BasicBlock, [9, 9, 9])
+    return ResNet(BasicBlock, [9, 9, 9], num_classes)
 
 
 def resnet110(num_classes):
