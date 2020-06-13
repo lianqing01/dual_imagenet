@@ -118,6 +118,82 @@ class _BatchNorm(_NormBase):
                 unbiased_mean = mean.clone()
                 unbiased_var = var.clone () * (bsz/float(bsz - 1))
                 std = torch.sqrt(var)
+                if self.sample_noise:
+                    with torch.no_grad():
+                        if self.sample_noise and self.data_dependent == True:
+                            # for mean
+
+                            group = int(bsz/self.noise_bsz)
+                            input_group = input.view([group, int(self.noise_bsz.item()), self.num_features, -1]).clone()
+                            group_mean = input_group.mean([1,3])
+                            group_var = (input_group**2).mean([1,3]) - mean.unsqueeze(0) **2
+
+                            #group_var[group_var<0] = 0
+                            group_var = torch.clamp(group_var, min=0)
+                            # sample_mean_var
+
+                            sample_mean_var = (group_mean**2).mean(0) - group_mean.mean(0)**2
+                            sample_mean_var *= (group) / max(float(group - 1), 1)
+                            #sample_mean_var[sample_mean_var<0] = 0
+                            sample_mean_var = torch.clamp(sample_mean_var, min=0)
+                            sample_mean_std = torch.sqrt(sample_mean_var)
+                            #sample std var
+                            sample_var_var = (group_var**2).mean(0) - group_var.mean(0)**2
+                            sample_var_var *= (group) / max(float(group - 1), 1)
+                            #sample_std_var[sample_std_var<0] = 0
+                            sample_var_var = torch.clamp(sample_var_var, min=0)
+
+                            sample_var_std = torch.sqrt(sample_var_var)
+                            # version 1
+                            #noise_mean = torch.normal(mean=0, std=std/ sqrt_bsz)
+                            #noise_std = torch.normal(mean=0, std=torch.sqrt((k + 2) / (4*self.noise_bsz)))
+                            # version 2
+                            noise_mean = torch.normal(mean=0, std=sample_mean_std)
+                            noise_var = torch.normal(mean=0, std=sample_var_std)
+
+                        elif self.sample_noise and self.data_dependent is not True:
+                            noise_mean = torch.normal(mean=self.sample_mean_mean.fill_(0), std=self.sample_std_mean)
+                            noise_var = torch.normal(mean=self.sample_mean_var.fill_(1), std=self.sample_std_var)
+
+                        # check noise mean and noise var like batch renormalization
+                        # for noise mean
+                        # for noise var
+                        '''
+                        if not self.batch_renorm and self.data_dependent != "after_x":
+                            noise_var = torch.clamp(noise_var, min=-1 * var.min() + 1/self.r_max, max=self.r_max)
+                            mean = mean + noise_mean.detach()
+                            var = var + noise_var.detach()
+                        elif self.data_dependent != "after_x":
+                            noise_var = var + noise_var
+                            noise_var = torch.clamp(noise_var, min=0)
+                        '''
+                '''
+                if self.data_dependent == "after_x":
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)))
+                    # add noise
+
+                    #self.summarize_x.append(output.detach())
+                    if self.after_x == "version_2":
+                        with torch.no_grad():
+                            noise_var = (output + noise_var) / output
+                            noise_var = noise_var.detach().clamp(min=0, max=10)
+                    output = output * _unsqueeze_ft(noise_var) + _unsqueeze_ft(noise_mean)
+
+                    #self.summarize_x_noise.append(output.detach())
+                    output = output * _unsqueeze_ft(self.weight)  + _unsqueeze_ft(self.bias)
+                elif not self.batch_renorm:
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
+                    + _unsqueeze_ft(self.bias)
+                else:
+                    with torch.no_grad():
+                        r = torch.sqrt(var + self.eps) / torch.sqrt(noise_var + self.eps)
+                        r = r.clamp(min=1 - float(self.r_max), max =1 + float(self.r_max))
+                        d = noise_mean / torch.sqrt(noise_var + self.eps)
+                        d = d.clamp(min=-0.5, max=0.5)
+                    output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps))) * _unsqueeze_ft(r) + \
+                        _unsqueeze_ft(d)
+                    output = output * _unsqueeze_ft(self.weight) + _unsqueeze_ft(self.bias)
+                '''
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                     + _unsqueeze_ft(self.bias)
 
