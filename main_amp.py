@@ -104,6 +104,7 @@ def parse():
     parser.add_argument('--sample_noise', default=False)
     parser.add_argument('--noise_mean_std', default=0, type=float)
     parser.add_argument('--noise_var_std', default=0, type=float)
+    parser.add_argument('--fixup', default=False)
 
     parser.add_argument('--opt-level', type=str)
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
@@ -184,9 +185,10 @@ def main():
 
     # Scale learning rate based on global batch size
     args.lr = args.lr*float(args.batch_size*args.world_size)/256.
+
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+                                    momentum=args.momentum,
+                                    weight_decay=args.weight_decay)
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
@@ -404,7 +406,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         else:
             loss.backward()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        #torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
 
         # for param in model.parameters():
@@ -413,6 +415,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
         if args.prof >= 0: torch.cuda.nvtx.range_push("optimizer.step()")
         optimizer.step()
         if args.prof >= 0: torch.cuda.nvtx.range_pop()
+        if 'brn' in args.arch:
+            for m in model.modules():
+                if isinstance(m, BatchRenorm2d):
+                    dist.all_reduce(m.running_mean.data.div_(args.world_size))
+                    dist.all_reduce(m.running_std.data.div_(args.world_size))
 
         if i%args.print_freq == 0:
             # Every print_freq iterations, check the loss, accuracy, and speed.

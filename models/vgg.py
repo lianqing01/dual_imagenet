@@ -10,7 +10,6 @@ from .instancenorm import InstanceNorm2d
 from .batchrenorm import BatchRenorm2d
 import torch.nn.utils.weight_norm as weightNorm
 
-from .batch_renormalization import BatchRenormalization2D
 
 class Conv_Cen2d(nn.Module):
     """Conv2d layer with Weight Centralization

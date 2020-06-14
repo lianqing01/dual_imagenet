@@ -1,6 +1,7 @@
 import argparse
 import os
 import shutil
+import copy
 import time
 
 import wandb
@@ -72,6 +73,16 @@ def str2bool(v):
 
 
 import numpy as np
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
 
 try:
     from apex.parallel import DistributedDataParallel as DDP
@@ -132,7 +143,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=1)
+    parser.add_argument('--grad_clip', default=1.5)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -143,7 +154,8 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=10, type=int)
+    parser.add_argument('--print_freq', default=100, type=int)
+    parser.add_argument('--mixed_precision', default=True, type=str2bool)
 
 
 
@@ -273,14 +285,6 @@ def main():
             m.weight_decay = args.constraint_decay
             m.get_optimal_lagrangian = args.get_optimal_lagrangian
             constraint_param.extend(list(map(id, m.parameters())))
-    affine_param = []
-    for m in model.modules():
-        if isinstance(m, Constraint_Norm):
-            affine_param.extend(list(map(id, m.parameters())))
-    if args.decrease_with_conv_bias:
-        for m in model.modules():
-            if isinstance(m, nn.Conv2d):
-                affine_param.extend(list(map(id, m.bias)))
 
 
     if args.decrease_affine_lr == 1:
@@ -295,35 +299,16 @@ def main():
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay)
 
-    else:
-        origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, model.parameters())
-        if args.decrease_affine_lr is not None:
-            affine_lr = args.decrease_affine_lr * args.lr
-        else:
-            affine_lr = args.lr
-        args.affine_lr = affine_lr
-
-        optimizer = optim.SGD([
-                        {'params': origin_param},
-                        {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
-                                'lr': args.constraint_lr,
-                                'weight_decay': args.constraint_decay},
-                        {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, model.parameters()),
-                                'lr': affine_lr,
-                                'weight_decay': args.affine_weight_decay,
-                                'momentum': args.affine_momentum}
-                        ],
-                        lr=args.lr, momentum=0.9,
-                        weight_decay=args.decay)
 
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
-    model, optimizer = amp.initialize(model, optimizer,
-                                      opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=args.keep_batchnorm_fp32,
-                                      loss_scale=args.loss_scale
-                                      )
+    if args.mixed_precision:
+        model, optimizer = amp.initialize(model, optimizer,
+                                        opt_level=args.opt_level,
+                                        keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                        loss_scale=args.loss_scale
+                                        )
 
     # For distributed training, wrap the model with apex.parallel.DistributedDataParallel.
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
@@ -405,20 +390,30 @@ def main():
         return
 
     #initialization
+    with torch.no_grad():
+        print("===initializtion====")
+        _initialize(train_loader, model, criterion, optimizer, 0)
+    device = torch.device("cuda")
+
     for m in model.modules():
         if isinstance(m, Constraint_Norm):
-            print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
-            break
+            m.sample_noise = args.sample_noise
+            m.sample_mean = torch.zeros(m.num_features).to(device)
+            m.add_noise = args.add_noise
+            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
+
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
         prec1 = validate(epoch, val_loader, model, criterion)
+
 
         # remember best prec@1 and save checkpoint
         if args.local_rank == 0:
@@ -430,7 +425,7 @@ def main():
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
                 'optimizer' : optimizer.state_dict(),
-            }, is_best)
+            }, is_best, filename = os.path.join("results/" + args.log_dir, "{}_checkpoint.pth.tar".format(epoch)))
 
 class data_prefetcher():
     def __init__(self, loader):
@@ -485,7 +480,6 @@ class data_prefetcher():
             target.record_stream(torch.cuda.current_stream())
         self.preload()
         return input, target
-
 
 def _initialize(train_loader, model, criterion, optimizer, epoch):
     batch_time = AverageMeter()
@@ -642,8 +636,8 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                         else:
                             track_layer += 1
 
-
-            allreduce_params(model.parameters())
+            if args.world_size > 1:
+                allreduce_params(model.parameters())
             for m in model.modules():
                 if isinstance(m, Constraint_Norm):
                     m.reset_norm_statistics()
@@ -710,8 +704,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss += constraint_loss
 
 
-        with amp.scale_loss(loss, optimizer) as scaled_loss:
-            scaled_loss.backward()
+        if args.mixed_precision:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -796,6 +793,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        var = var,
                        loss=losses, top1=top1, top5=top5))
                 logger.info("remain time:  {}".format(remain_time))
+                lrs = []
+                for pg in optimizer.param_groups:
+                    lrs.append(pg['lr'])
+                logger.info("learning rate: {}".format(lrs))
 
         input, target = prefetcher.next()
     if args.local_rank == 0:
@@ -904,27 +905,24 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 30
+    factor = epoch // 40
 
-    if epoch >= 80:
+    if epoch >= 100:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
-    affine_lr = args.affine_lr*(0.1**factor)
     constraint_lr = args.constraint_lr * (0.1 ** factor)
 
 
     """Warmup"""
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
-        affine_lr =  affine_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
         constraint_lr = constraint_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
 
 
 
     optimizer.param_groups[0]['lr'] = lr
     optimizer.param_groups[1]['lr'] = constraint_lr
-    optimizer.param_groups[2]['lr'] = affine_lr
 
 
 
