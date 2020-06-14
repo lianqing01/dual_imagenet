@@ -1,4 +1,5 @@
 from .vgg import *
+from .resnet_downsample import *
 from .resnet import *
 # from .densenet_efficient_multi_gpu import DenseNet190
 from .resnet_nobn import *
