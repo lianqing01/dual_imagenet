@@ -1,7 +1,6 @@
 import argparse
 import os
 import shutil
-import copy
 import time
 
 import wandb
@@ -73,16 +72,6 @@ def str2bool(v):
 
 
 import numpy as np
-def str2bool(v):
-        if isinstance(v, bool):
-            return v
-        if v.lower() in ('yes', 'true', 't', 'y', '1'):
-            return True
-        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-            return False
-        else:
-            raise argparse.ArgumentTypeError('Boolean value expected.')
-
 
 try:
     from apex.parallel import DistributedDataParallel as DDP
@@ -143,7 +132,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=1.5)
+    parser.add_argument('--grad_clip', default=1)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -154,8 +143,7 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--optim_loss', default="cross_entropy")
     parser.add_argument('--num_classes', default=10, type=int)
-    parser.add_argument('--print_freq', default=100, type=int)
-    parser.add_argument('--mixed_precision', default=True, type=str2bool)
+    parser.add_argument('--print_freq', default=10, type=int)
 
 
 
@@ -307,16 +295,35 @@ def main():
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay)
 
+    else:
+        origin_param = filter(lambda p:id(p) not in affine_param and id(p) not in constraint_param, model.parameters())
+        if args.decrease_affine_lr is not None:
+            affine_lr = args.decrease_affine_lr * args.lr
+        else:
+            affine_lr = args.lr
+        args.affine_lr = affine_lr
+
+        optimizer = optim.SGD([
+                        {'params': origin_param},
+                        {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
+                                'lr': args.constraint_lr,
+                                'weight_decay': args.constraint_decay},
+                        {'params': filter(lambda p:id(p) in affine_param and id(p) not in constraint_param, model.parameters()),
+                                'lr': affine_lr,
+                                'weight_decay': args.affine_weight_decay,
+                                'momentum': args.affine_momentum}
+                        ],
+                        lr=args.lr, momentum=0.9,
+                        weight_decay=args.decay)
 
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
-    if args.mixed_precision:
-        model, optimizer = amp.initialize(model, optimizer,
-                                        opt_level=args.opt_level,
-                                        keep_batchnorm_fp32=args.keep_batchnorm_fp32,
-                                        loss_scale=args.loss_scale
-                                        )
+    model, optimizer = amp.initialize(model, optimizer,
+                                      opt_level=args.opt_level,
+                                      keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                      loss_scale=args.loss_scale
+                                      )
 
     # For distributed training, wrap the model with apex.parallel.DistributedDataParallel.
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
@@ -398,44 +405,20 @@ def main():
         return
 
     #initialization
-    with torch.no_grad():
-        print("===initializtion====")
-        _initialize(train_loader, model, criterion, optimizer, 0)
     for m in model.modules():
         if isinstance(m, Constraint_Norm):
             print("mu: {} rank: {}".format(m.mu_.mean(), args.local_rank))
             break
-    device = torch.device("cuda")
-
-    for m in model.modules():
-        if isinstance(m, Constraint_Norm):
-            m.sample_noise = args.sample_noise
-            m.sample_mean = torch.zeros(m.num_features).to(device)
-            m.add_noise = args.add_noise
-            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
-            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
-
-        '''
-        if epoch % 1 == 0:
-            torch.cuda.synchronize()
-            _reset(train_loader, model, criterion, optimizer, epoch)
-
-            for p1, p2 in zip(model.parameters(), model_old.parameters()):
-                p2.data.copy_(p1.data)
-            get_momentum(train_loader, model,model_old, criterion, optimizer, epoch)
-        '''
-
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
         prec1 = validate(epoch, val_loader, model, criterion)
-
 
         # remember best prec@1 and save checkpoint
         if args.local_rank == 0:
@@ -447,7 +430,7 @@ def main():
                 'state_dict': model.state_dict(),
                 'best_prec1': best_prec1,
                 'optimizer' : optimizer.state_dict(),
-            }, is_best, filename = os.path.join("results/" + args.log_dir, "{}_checkpoint.pth.tar".format(epoch)))
+            }, is_best)
 
 class data_prefetcher():
     def __init__(self, loader):
@@ -502,333 +485,6 @@ class data_prefetcher():
             target.record_stream(torch.cuda.current_stream())
         self.preload()
         return input, target
-
-def _reset(train_loader, model, criterion, optimizer, epoch):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    train_loss_avg = 0
-    train_loss = AverageMeter()
-    correct = 0
-    total = 0
-    mean = 0
-    var = 0
-    lambda_ = 0
-    xi_ = 0
-
-
-    # switch to train mode
-    model.train()
-    end = time.time()
-    num_norm = 0
-    for m in model.modules():
-        if isinstance(m, Constraint_Norm):
-            m.reset_norm_statistics()
-            num_norm+=1
-    print("num_norm : {}".format(num_norm))
-
-    prefetcher = data_prefetcher(train_loader)
-    input, target = prefetcher.next()
-    i = 0
-    for layer in range(num_norm):
-        for idx in range(2):
-            while input is not None:
-                i += 1
-                if i>=11:
-                    i = 0
-                    break
-                # compute output
-                output = model(input)
-
-                # compute gradient and do SGD step
-                # constraint loss
-                weight_mean = 0
-                weight_var = 0
-                weight_mean_abs = 0
-                weight_var_abs = 0
-                for m in model.modules():
-                    if isinstance(m, Constraint_Lagrangian):
-                        weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                        weight_mean_abs_, weight_var_abs_ = m.get_weight_mean_var_abs()
-                        weight_mean += weight_mean_
-                        weight_var += weight_var_
-                        weight_mean_abs += weight_mean_abs_
-                        weight_var_abs += weight_var_abs_
-
-                constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
-                constraint_loss = args.lambda_constraint_weight * constraint_loss
-                weight_mean_abs = args.lambda_constraint_weight * weight_mean_abs
-                weight_var_abs = args.lambda_constraint_weight * weight_var_abs
-
-                # optimize constraint loss
-
-
-
-
-
-
-                input, target = prefetcher.next()
-                if i%args.print_freq == 0:
-                    if args.local_rank == 0:
-                        mean = []
-                        var = []
-                        for m in model.modules():
-                            if isinstance(m, Constraint_Norm):
-                                mean_, var_ = m.get_mean_var()
-                                mean.append(mean_.abs())
-                                var.append(var_.abs())
-                        mean = torch.mean(torch.stack(mean))
-                        var = torch.mean(torch.stack(var))
-                        curr_idx = epoch * len(train_loader) + i
-
-                        # get the constraint weight
-                        lambda_ = []
-                        xi_ = []
-                        for m in model.modules():
-                            if isinstance(m, Constraint_Lagrangian):
-                                lambda_.append(m.lambda_.data.abs().mean())
-                                xi_.append(m.xi_.data.abs().mean())
-                        lambda_ = torch.max(torch.stack(lambda_))
-                        xi_ = torch.max(torch.stack(xi_))
-
-
-                    # Every print_freq iterations, check the loss, accuracy, and speed.
-                    # For best performance, it doesn't make sense to print these metrics every
-                    # iteration, since they incur an allreduce and some host<->device syncs.
-
-                    # Measure accuracy
-
-                    # Average loss and accuracy across processes for logging
-
-                    # to_python_float incurs a host<->device sync
-
-                    torch.cuda.synchronize()
-                    batch_time.update((time.time() - end)/args.print_freq)
-                    end = time.time()
-                    remain_iter = args.epochs * len(train_loader) - (epoch*len(train_loader) + i)
-                    remain_time = remain_iter * batch_time.avg
-                    t_m, t_s = divmod(remain_time, 60)
-                    t_h, t_m = divmod(t_m, 60)
-                    remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-
-                    if args.local_rank == 0:
-                        logger.info('Epoch: [{0}][{1}/{2}]\t'
-                            'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                            'Speed {3:.3f} ({4:.3f})\t'
-                            'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
-                            'Constraint mean {corat_mean:.4f}\t'
-                            'Constraint var {corat_var:.4f}\t'
-                            'Constraint lambda {corat_lambda:.4f}\t'
-                            'Constraint xi {corat_xi:.4f}\t'
-                            'mean {mean:.4f}\t'
-                            'var {var:.4f}\t'
-                            'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                            'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                            epoch, i, len(train_loader),
-                            args.world_size*args.batch_size/batch_time.val,
-                            args.world_size*args.batch_size/batch_time.avg,
-                            batch_time=batch_time,
-                            corat_mean = -1 * weight_mean.item(),
-                            corat_var = -1 * weight_var.item(),
-                            corat_lambda = lambda_,
-                            corat_xi = xi_,
-                            mean = mean,
-                            var = var,
-                            loss=losses, top1=top1, top5=top5))
-                        logger.info("remain time:  {}".format(remain_time))
-
-
-            if idx == 0:
-                track_layer = 0
-                for m in model.modules():
-                    if isinstance(m, Constraint_Norm):
-                        if track_layer == layer:
-                            m._initialize_mu(with_affine=True)
-                            break
-                        else:
-                            track_layer +=1
-            elif idx == 1:
-                track_layer = 0
-                for m in model.modules():
-                    if isinstance(m, Constraint_Norm):
-                        if track_layer == layer:
-                            m._initialize_gamma(with_affine=True)
-                            break
-                        else:
-                            track_layer += 1
-            else:
-                track_layer =0
-                for m in model.modules():
-                    if isinstance(m, Constraint_Norm):
-                        if track_layer == layer:
-                            m._initialize_affine()
-                            break
-                        else:
-                            track_layer += 1
-
-            if args.world_size > 1:
-                allreduce_params(model.parameters())
-            for m in model.modules():
-                if isinstance(m, Constraint_Norm):
-                    m.reset_norm_statistics()
-
-
-
-def get_momentum(train_loader, model, model_old, criterion, optimizer, epoch):
-    batch_time = AverageMeter()
-    losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
-    train_loss_avg = 0
-    train_loss = AverageMeter()
-    correct = 0
-    total = 0
-    mean = 0
-    var = 0
-    lambda_ = 0
-    xi_ = 0
-
-
-    # switch to train mode
-    model.train()
-    end = time.time()
-
-    print("get momentum")
-    prefetcher = data_prefetcher(train_loader)
-    input, target = prefetcher.next()
-    i = 0
-    while input is not None:
-        i += 1
-        if i > 50:
-            return None
-
-
-        adjust_learning_rate(optimizer, epoch, i, len(train_loader))
-
-        # compute output
-        output = model(input)
-        loss = criterion(output, target)
-
-        # compute gradient and do SGD step
-        optimizer.zero_grad()
-        # constraint loss
-        weight_mean = 0
-        weight_var = 0
-        weight_mean_abs = 0
-        weight_var_abs = 0
-        for m in model.modules():
-            if isinstance(m, Constraint_Lagrangian):
-                weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                weight_mean += args.lambda_weight_mean * args.lambda_constraint_weight * weight_mean_
-                weight_var += aegs.lambda_constraint_weight * weight_var_
-
-        constraint_loss = weight_mean + weight_var
-
-        # optimize constraint loss
-
-        train_loss.update(loss.item())
-        train_loss_avg += loss.item()
-        loss += constraint_loss
-
-
-        with amp.scale_loss(loss, optimizer) as scaled_loss:
-            scaled_loss.backward()
-        grads = [p.grad.max() for p in model.parameters()]
-        grads = torch.stack(grads).max()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-
-        # for param in model.parameters():
-        #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
-
-        optimizer.step()
-        for p1, p2 in zip(model.parameters(), model_old.parameters()):
-            p1.data.copy_(p2.data)
-        torch.cuda.synchronize()
-
-        if i%args.print_freq == 0:
-            mean = []
-            var = []
-            for m in model.modules():
-                if isinstance(m, Constraint_Norm):
-                    mean_, var_ = m.get_mean_var()
-                    mean.append(mean_.abs())
-                    var.append(var_.abs())
-            mean = torch.mean(torch.stack(mean))
-            var = torch.mean(torch.stack(var))
-            curr_idx = epoch * len(train_loader)+i
-
-            # get the constraint weight
-
-
-            # Every print_freq iterations, check the loss, accuracy, and speed.
-            # For best performance, it doesn't make sense to print these metrics every
-            # iteration, since they incur an allreduce and some host<->device syncs.
-
-            # Measure accuracy
-            prec1, prec5 = accuracy(output.data, target, topk=(1, 5))
-
-            # Average loss and accuracy across processes for logging
-            if args.distributed:
-                reduced_loss = reduce_tensor(loss.data)
-                prec1 = reduce_tensor(prec1)
-                prec5 = reduce_tensor(prec5)
-            else:
-                reduced_loss = loss.data
-
-            # to_python_float incurs a host<->device sync
-            losses.update(to_python_float(reduced_loss), input.size(0))
-            top1.update(to_python_float(prec1), input.size(0))
-            top5.update(to_python_float(prec5), input.size(0))
-
-            torch.cuda.synchronize()
-            batch_time.update((time.time() - end)/args.print_freq)
-            end = time.time()
-            remain_iter = args.epochs * len(train_loader) - (epoch*len(train_loader) + i)
-            remain_time = remain_iter * batch_time.avg
-            t_m, t_s = divmod(remain_time, 60)
-            t_h, t_m = divmod(t_m, 60)
-            remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
-
-            if args.local_rank == 0:
-                logger.info('Epoch: [{0}][{1}/{2}]\t'
-                      'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                      'Speed {3:.3f} ({4:.3f})\t'
-                      'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
-                      'Constraint mean {corat_mean:.4f}\t'
-                      'Constraint var {corat_var:.4f}\t'
-                      'mean {mean:.4f}\t'
-                      'var {var:.4f}\t'
-                      'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
-                      'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
-                       epoch, i, len(train_loader),
-                       args.world_size*args.batch_size/batch_time.val,
-                       args.world_size*args.batch_size/batch_time.avg,
-                       batch_time=batch_time,
-                       corat_mean = -1 * weight_mean.item(),
-                       corat_var = -1 * weight_var.item(),
-                       mean = mean,
-                       var = var,
-                       loss=losses, top1=top1, top5=top5))
-                logger.info("remain time:  {}".format(remain_time))
-                lrs = []
-                for pg in optimizer.param_groups:
-                    lrs.append(pg['lr'])
-                logger.info("learning rate: {}".format(lrs))
-
-        input, target = prefetcher.next()
-    if args.local_rank == 0:
-        wandb.log({"train/acc_epoch": top1.avg}, step=epoch)
-        wandb.log({"train/loss_epoch": losses.avg}, step=epoch)
-        wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
-        wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
-        wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
-        wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
-        wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
-
-        # Pop range "Body of iteration {}".format(i)
-
-
 
 
 def _initialize(train_loader, model, criterion, optimizer, epoch):
@@ -986,8 +642,8 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                         else:
                             track_layer += 1
 
-            if args.world_size > 1:
-                allreduce_params(model.parameters())
+
+            allreduce_params(model.parameters())
             for m in model.modules():
                 if isinstance(m, Constraint_Norm):
                     m.reset_norm_statistics()
@@ -1054,11 +710,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
         loss += constraint_loss
 
 
-        if args.mixed_precision:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
-        else:
-            loss.backward()
+        with amp.scale_loss(loss, optimizer) as scaled_loss:
+            scaled_loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -1143,10 +796,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        var = var,
                        loss=losses, top1=top1, top5=top5))
                 logger.info("remain time:  {}".format(remain_time))
-                lrs = []
-                for pg in optimizer.param_groups:
-                    lrs.append(pg['lr'])
-                logger.info("learning rate: {}".format(lrs))
 
         input, target = prefetcher.next()
     if args.local_rank == 0:
@@ -1255,24 +904,27 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 40
+    factor = epoch // 30
 
-    if epoch >= 100:
+    if epoch >= 80:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
+    affine_lr = args.affine_lr*(0.1**factor)
     constraint_lr = args.constraint_lr * (0.1 ** factor)
 
 
     """Warmup"""
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
+        affine_lr =  affine_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
         constraint_lr = constraint_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
 
 
 
     optimizer.param_groups[0]['lr'] = lr
     optimizer.param_groups[1]['lr'] = constraint_lr
+    optimizer.param_groups[2]['lr'] = affine_lr
 
 
 

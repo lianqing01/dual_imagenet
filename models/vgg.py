@@ -4,9 +4,6 @@ import math
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.autograd import Variable
-from .dual_norm import DualNorm
-from .MABN import MABN2d
-from .dual_norm import DualAffine
 from .constraint_bn_v2 import *
 from .batchnorm import BatchNorm2d
 from .instancenorm import InstanceNorm2d
