@@ -245,7 +245,7 @@ def main():
     logger.info(args.world_size)
     if args.local_rank == 0:
 
-        wandb.init(project="imagemodel", dir="results/{}".format(args.log_dir),
+        wandb.init(project="tinyimagenet", dir="results/{}".format(args.log_dir),
            name=args.log_dir,)
         wandb.config.update(args)
 

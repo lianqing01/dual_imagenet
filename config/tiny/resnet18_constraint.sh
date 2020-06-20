@@ -7,7 +7,7 @@ python -m torch.distributed.launch --nproc_per_node=$1 \
     --log_dir tiny/resnet18_constraint \
     --constraint_lr 0.01 \
     --constraint_decay 1 \
-    --lambda_constraint_weight 1e-3 \
+    --lambda_constraint_weight 0 \
     --lambda_weight_mean 1 \
     --sample_noise False \
     --noise_data_dependent False \

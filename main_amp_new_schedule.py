@@ -106,7 +106,7 @@ def parse():
     parser.add_argument('--noise_var_std', default=0, type=float)
     parser.add_argument('--fixup', default=False)
 
-    parser.add_argument('--opt-level', type=str, default='O1')
+    parser.add_argument('--opt-level', type=str)
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
     parser.add_argument('--loss-scale', type=str, default=None)
     parser.add_argument('--channels-last', type=bool, default=False)
@@ -195,7 +195,7 @@ def main():
     if args.mixed_precision:
         model, optimizer = amp.initialize(model, optimizer,
                                       opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=None,
+                                      keep_batchnorm_fp32=False,
                                       loss_scale=args.loss_scale
                                       )
 
@@ -265,12 +265,12 @@ def main():
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=False, sampler=train_sampler, collate_fn=collate_fn)
+        num_workers=args.workers, pin_memory=True, sampler=train_sampler, collate_fn=collate_fn)
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
         batch_size=args.batch_size, shuffle=False,
-        num_workers=args.workers, pin_memory=False,
+        num_workers=args.workers, pin_memory=True,
         sampler=val_sampler,
         collate_fn=collate_fn)
 
@@ -568,10 +568,12 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 30
-
-    if epoch >= 80:
-        factor = factor + 1
+    if epoch >=100:
+        factor = 1
+    elif epoch >=150:
+        factor = 2
+    else:
+        factor = 0
 
     lr = args.lr*(0.1**factor)
 

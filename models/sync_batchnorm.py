@@ -2,8 +2,11 @@ import torch
 from torch.nn.modules.batchnorm import _BatchNorm
 from torch.nn import functional as F
 
-from apex.parallel.sync_batchnorm_kernel import SyncBatchnormFunction
-from apex.parallel import ReduceOp
+try:
+    from apex.parallel.sync_batchnorm_kernel import SyncBatchnormFunction
+    from apex.parallel import ReduceOp
+except:
+    pass
 
 
 class SyncBatchNorm(_BatchNorm):
