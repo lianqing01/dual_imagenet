@@ -102,8 +102,10 @@ def parse():
                         help='enabling apex sync BN.')
 
     parser.add_argument('--sample_noise', default=False)
-    parser.add_argument('--noise_mean_std', default=0, type=float)
-    parser.add_argument('--noise_var_std', default=0, type=float)
+    parser.add_argument('--noise_std_mean', default=0, type=float)
+    parser.add_argument('--noise_std_var', default=0, type=float)
+
+
     parser.add_argument('--fixup', default=False)
 
     parser.add_argument('--opt-level', type=str, default='O1')
@@ -283,6 +285,15 @@ def main():
         pass
     device = torch.device("cuda")
 
+
+    from models.batchrenorm import BatchRenorm2d
+    from models.batchnorm import BatchNorm2d
+    for m in model.modules():
+        if isinstance(m, (BatchRenorm2d, BatchNorm2d)):
+            m.sample_noise=args.sample_noise
+            m.sample_mean = torch.ones(m.num_features).to(device)
+            m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
+            m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
