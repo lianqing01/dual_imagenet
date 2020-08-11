@@ -4,6 +4,7 @@ import torch
 from torch.nn.parameter import Parameter
 import torch.nn as nn
 from torch.autograd import Function
+from .constraint_bn_v2 import *
 
 class LagrangianFunction(Function):
 
@@ -27,10 +28,10 @@ class LagrangianFunction(Function):
         return grad_input, grad_weight
 
 
-class Constraint_Norm(nn.Module):
+class Constraint_Norm_mu_v1_(nn.Module):
 
     def __init__(self, num_features, weight_decay=1e-3, get_optimal_lagrangian=False, pre_affine=True, post_affine=True):
-        super(Constraint_Norm, self).__init__()
+        super(Constraint_Norm_mu_v1_, self).__init__()
         self.num_features = num_features
         self.pre_affine=pre_affine
         self.post_affine = post_affine
@@ -48,8 +49,6 @@ class Constraint_Norm(nn.Module):
         # strore mean and variance for reference
         self.register_buffer("mean", torch.zeros(num_features))
         self.register_buffer("var", torch.zeros(num_features))
-        self.register_buffer("real_mu", torch.zeros(num_features))
-        self.register_buffer("real_gamma", torch.zeros(num_features))
 
         self.register_buffer("tracking_times", torch.tensor(0, dtype=torch.long))
         self.update_affine_only = False
@@ -102,11 +101,6 @@ class Constraint_Norm(nn.Module):
             var = var.abs().mean()
         return mean, var
 
-    def get_real_mean_var(self):
-         with torch.no_grad():
-            mean = self.real_mu / (self.tracking_times)
-            var = self.real_gamma / (self.tracking_times)
-         return mean, var
 
 
     def set_dim(self):
@@ -140,7 +134,6 @@ class Constraint_Norm(nn.Module):
 
         # mean
 
-
         if self.pre_affine:
             if self.sample_noise and self.training:
                     noise_mean = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_mean_std)
@@ -149,19 +142,20 @@ class Constraint_Norm(nn.Module):
             else:
                 x = x - self.mu_
 
+        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
         if self.pre_affine:
             if self.sample_noise and self.training:
                     noise_var = torch.normal(mean=self.sample_mean.fill_(1), std=self.sample_var_std)
                     noise_var = noise_var.view(self.gamma_.size()).clamp(min=0.1, max=10)
 
-                    x = x / torch.sqrt((self.gamma_ * noise_var.detach())**2 + self.eps)
+                    x = x / torch.sqrt(self.gamma_**2 + self.eps) * torch.sqrt(noise_var.detach())
             else:
 
                 x = x / torch.sqrt(self.gamma_**2 + self.eps)
 
-        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
-        var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         self.mean += mean.detach()
+
+        var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         self.var += var.detach()
 
         self.tracking_times += 1
@@ -176,14 +170,12 @@ class Constraint_Norm(nn.Module):
         self.mean.fill_(0)
         self.var.fill_(0)
         self.tracking_times.fill_(0)
-        self.real_mu.fill_(0)
-        self.real_gamma.fill_(0)
 
 
 
-class Constraint_Norm1d(Constraint_Norm):
+class Constraint_Norm_mu_v1_1d(Constraint_Norm_mu_v1_):
     def __init__(self, num_features, pre_affine=True, post_affine=True):
-        super(Constraint_Norm1d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
+        super(Constraint_Norm_mu_v1_1d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features]
@@ -191,9 +183,9 @@ class Constraint_Norm1d(Constraint_Norm):
         if self.post_affine != False:
             self.post_affine_layer = Constraint_Affine1d(self.num_features)
 
-class Constraint_Norm2d(Constraint_Norm):
+class Constraint_Norm_mu_v1_2d(Constraint_Norm_mu_v1_):
     def __init__(self, num_features, pre_affine=True, post_affine=True):
-        super(Constraint_Norm2d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
+        super(Constraint_Norm_mu_v1_2d, self).__init__(num_features, pre_affine=pre_affine, post_affine=post_affine)
 
     def set_dim(self):
         self.feature_dim = [1, self.num_features, 1, 1]
@@ -202,70 +194,5 @@ class Constraint_Norm2d(Constraint_Norm):
             self.post_affine_layer = Constraint_Affine2d(self.num_features)
 
 
-
-
-class Constraint_Lagrangian(nn.Module):
-
-    def __init__(self, num_features, weight_decay=1e-4, get_optimal_lagrangian=False):
-        super(Constraint_Lagrangian, self).__init__()
-        self.num_features = num_features
-        self.lambda_ = nn.Parameter(torch.Tensor(num_features))
-
-        self.xi_ = nn.Parameter(torch.Tensor(num_features))
-        self.lambda_.data.fill_(0)
-        self.xi_.data.fill_(0)
-        self.weight_decay = weight_decay
-        self.get_optimal_lagrangian = get_optimal_lagrangian
-
-    def get_weighted_mean(self, x, norm_dim):
-        mean = x.mean(dim=norm_dim)
-        self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
-        self.weight_mean = self.weight_mean.mean()
-        return mean
-
-
-    def get_weighted_var(self, x,  gamma, norm_dim):
-        var = x**2 - 1
-        var = var.mean(dim=norm_dim)
-        self.weight_var = LagrangianFunction.apply(var, self.lambda_)
-        self.weight_var = self.weight_var.mean()
-        return var+1
-    def get_weight_mean_var(self):
-        return (self.weight_mean, self.weight_var)
-
-
-
-class Constraint_Affine(nn.Module):
-    def __init__(self, num_features):
-        super(Constraint_Affine, self).__init__()
-        self.num_features = num_features
-        self.set_dim()
-
-        self.c_ = nn.Parameter(torch.Tensor(num_features).view(self.feature_dim))
-        self.u_ = nn.Parameter(torch.Tensor(num_features).view(self.feature_dim))
-        self.c_.data.fill_(0)
-        self.u_.data.fill_(1)
-
-    def set_dim(self):
-        raise NotImplementedError
-
-
-    def forward(self, x):
-        return x * self.u_ + self.c_
-
-class Constraint_Affine1d(Constraint_Affine):
-    def __init__(self, num_features):
-        super(Constraint_Affine1d, self).__init__(num_features)
-
-    def set_dim(self):
-        self.feature_dim = [1, self.num_features]
-
-
-class Constraint_Affine2d(Constraint_Affine):
-    def __init__(self, num_features):
-        super(Constraint_Affine2d, self).__init__(num_features)
-
-    def set_dim(self):
-        self.feature_dim = [1, self.num_features, 1, 1]
 
 

@@ -117,7 +117,6 @@ class _BatchNorm(_NormBase):
                 var = (input**2).mean([0,2]) - mean**2
                 unbiased_mean = mean.clone()
                 unbiased_var = var.clone () * (bsz/float(bsz - 1))
-                std = torch.sqrt(var)
                 output = (input - _unsqueeze_ft(mean)) * _unsqueeze_ft(torch.sqrt(1 / (var + self.eps)) * self.weight) \
                     + _unsqueeze_ft(self.bias)
 

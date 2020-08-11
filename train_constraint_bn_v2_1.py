@@ -366,10 +366,6 @@ def train(epoch):
 
         optimizer.zero_grad()
         loss.backward()
-        if args.add_grad_noise == True:
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    m.add_grad_noise_()
         torch.nn.utils.clip_grad_norm_(net.parameters(), args.grad_clip)
         if use_cuda:
             optimizer.step()
@@ -863,20 +859,6 @@ for epoch in range(start_epoch, args.epoch):
     if epoch == args.decay_constraint:
         args.lambda_constraint_weight = 0
 
-    if epoch % args.get_norm_freq == 0:
-        if args.noise_data_dependent:
-            args.sample_noise = True
-            for i in range(5):
-                get_norm_stat(epoch)
-
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    if epoch<=100:
-                        m.summarize_norm_stat()
-                    m.reset_norm_statistics()
-            for m in net.modules():
-                if isinstance(m, Constraint_Norm):
-                    m.sample_noise=True
     train_loss, reg_loss, train_acc = train(epoch)
     test_loss, test_acc = test(epoch)
     if args.lr_ReduceLROnPlateau == True:

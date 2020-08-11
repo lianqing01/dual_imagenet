@@ -15,3 +15,6 @@ try:
     from .sync_batchnorm import *
 except:
     pass
+from .constraint_bn_v2 import *
+from .constraint_bn_v2_mu_v1 import *
+from .batchnorm import *

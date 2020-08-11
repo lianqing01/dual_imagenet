@@ -100,6 +100,7 @@ def parse():
     parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument('--sync_bn', action='store_true',
                         help='enabling apex sync BN.')
+    parser.add_argument('--norm_layer', default=None, type=str)
 
     parser.add_argument('--sample_noise', default=False)
     parser.add_argument('--noise_std_mean', default=0, type=float)
@@ -171,12 +172,23 @@ def main():
         memory_format = torch.contiguous_format
 
     # create model
+    global norm_layer
+    print(args.norm_layer)
+    if args.norm_layer is not None and args.norm_layer != 'False':
+        if args.norm_layer == 'bn':
+            norm_layer = nn.BatchNorm2d
+        elif args.norm_layer == 'mybn':
+            norm_layer = models.__dict__['BatchNorm2d']
+        else:
+            norm_layer = None
+
+
     if args.pretrained:
         logger.info("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
+        model = models.__dict__[args.arch](pretrained=True, norm_layer=norm_layer)
     else:
         logger.info("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        model = models.__dict__[args.arch](norm_layer=norm_layer)
 
     if args.sync_bn:
         import apex
@@ -288,12 +300,13 @@ def main():
 
     from models.batchrenorm import BatchRenorm2d
     from models.batchnorm import BatchNorm2d
-    for m in model.modules():
-        if isinstance(m, (BatchRenorm2d, BatchNorm2d)):
-            m.sample_noise=args.sample_noise
-            m.sample_mean = torch.ones(m.num_features).to(device)
-            m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
-            m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
+    if args.sample_noise:
+        for m in model.modules():
+            if isinstance(m, (BatchRenorm2d, BatchNorm2d, norm_layer)):
+                m.sample_noise=args.sample_noise
+                m.sample_mean = torch.ones(m.num_features).to(device)
+                m.noise_std_mean=torch.sqrt(torch.Tensor([args.noise_std_mean]))[0].to(device)
+                m.noise_std_var=torch.sqrt(torch.Tensor([args.noise_std_var]))[0].to(device)
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
@@ -579,9 +592,9 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 30
+    factor = epoch // 40
 
-    if epoch >= 80:
+    if epoch >= 100:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
