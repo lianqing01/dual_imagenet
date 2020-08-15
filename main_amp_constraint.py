@@ -189,6 +189,11 @@ def parse():
     parser.add_argument('--norm_layer', default=None, type=str)
     parser.add_argument('--warmup_noise', default=None, type=str)
     parser.add_argument('--warmup_scale', default=10, type=float)
+    parser.add_argument('--lag_rho', default=0, type=float)
+    parser.add_argument('--warmup_roi', default=None, type=str)
+
+
+
 
 
 
@@ -221,6 +226,10 @@ def parse():
     if args.warmup_noise is not None:
         args.warmup_noise = args.warmup_noise.split(",")[:-1]
         args.warmup_noise = [int(i) for i in args.warmup_noise]
+    if args.warmup_roi is not None:
+        args.warmup_roi = args.warmup_roi.split(",")[:-1]
+        args.warmup_roi = [int(i) for i in args.warmup_roi]
+
 
 
     return args
@@ -240,7 +249,7 @@ def main():
 
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
-        args.distributed = int(os.environ['WORLD_SIZE']) > 1
+        args.distributed = int(os.environ['WORLD_SIZE']) >= 1
 
     args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
     os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
@@ -290,8 +299,11 @@ def main():
             norm_layer =  models.__dict__['Constraint_Norm2d']
         elif args.norm_layer == 'cbn_mu_v1':
             norm_layer = models.__dict__['Constraint_Norm_mu_v1_2d']
+        elif args.norm_layer == 'cbn_notheta':
+            norm_layer = models.__dict__['Constraint_Norm_notheta_2d']
         else:
             norm_layer = None
+        print(norm_layer)
 
     if args.pretrained:
         logger.info("=> using pre-trained model '{}'".format(args.arch))
@@ -361,7 +373,6 @@ def main():
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
                 model.load_state_dict(checkpoint['state_dict'])
-                optimizer.load_state_dict(checkpoint['optimizer'])
                 logger.info("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
@@ -417,6 +428,10 @@ def main():
         return
 
     #initialization
+
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            m.lagrangian.rho = args.lag_rho
     with torch.no_grad():
         if not args.resume:
             print("===initializtion====")
@@ -431,6 +446,7 @@ def main():
             m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
             m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
+
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
@@ -443,6 +459,8 @@ def main():
                     if isinstance(m, norm_layer):
                         m.sample_mean_std *= math.sqrt(args.warmup_scale)
                         m.sample_var_std *= math.sqrt(args.warmup_scale)
+
+
 
 
         train(train_loader, model, criterion, optimizer, epoch)

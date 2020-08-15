@@ -114,21 +114,24 @@ class Constraint_Norm(nn.Module):
 
     def _initialize_mu(self, with_affine=False):
         self.mean = self.mean / self.tracking_times
-        if with_affine:
-            self.old_mu_ = self.mu_
+        self.old_mu_ = self.mu_
 
-        self.mu_.data += self.mean.view(self.mu_.size())
+        self.mu_.data += self.mean.view(self.mu_.size())  * torch.sqrt(self.gamma_**2 + self.eps)
 
     def _initialize_gamma(self, with_affine=False):
-        if with_affine:
-            self.old_gamma_ = self.gamma_
+        self.old_gamma_ = self.gamma_
         self.var = self.var / self.tracking_times
         self.var -= 1
-        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * self.gamma_**2).data
+        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps)).data
 
-    def _initialize_affine(self):
+    def _initialize_affine(self, resume=None):
         #temp = self.post_affine_layer.u_.data / (self.old_gamma_.data + self.eps)
         #self.post_affine_layer.u_.data.copy_(temp * self.gamma_.data))
+        if resume is not None:
+
+            self.post_affine_layer.u_.data*= torch.sqrt(self.gamma_**2 + self.eps) / torch.sqrt(self.old_gamma_**2 + self.eps)
+
+            self.post_affine_layer.c_.data+= (self.post_affine_layer.u_ * (self.mu_ - self.old_mu_) / torch.sqrt(self.gamma_**2 + self.eps))
 
 
         #self.post_affine_layer.c_.data -= (temp -temp1)
@@ -139,6 +142,10 @@ class Constraint_Norm(nn.Module):
     def forward(self, x):
 
         # mean
+
+        x_ = (x - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps)
+        mean = self.lagrangian.get_weighted_mean(x_, self.norm_dim)
+        var = self.lagrangian.get_weighted_var(x_, self.gamma_, self.norm_dim)
 
 
         if self.pre_affine:
@@ -159,8 +166,6 @@ class Constraint_Norm(nn.Module):
 
                 x = x / torch.sqrt(self.gamma_**2 + self.eps)
 
-        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
-        var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         self.mean += mean.detach()
         self.var += var.detach()
 
@@ -220,6 +225,8 @@ class Constraint_Lagrangian(nn.Module):
     def get_weighted_mean(self, x, norm_dim):
         mean = x.mean(dim=norm_dim)
         self.weight_mean = LagrangianFunction.apply(mean, self.xi_)
+        if self.rho > 0:
+            self.weight_mean += mean * self.rho
         self.weight_mean = self.weight_mean.mean()
         return mean
 
@@ -228,6 +235,8 @@ class Constraint_Lagrangian(nn.Module):
         var = x**2 - 1
         var = var.mean(dim=norm_dim)
         self.weight_var = LagrangianFunction.apply(var, self.lambda_)
+        if self.rho > 0:
+            self.weight_var += var * self.rho
         self.weight_var = self.weight_var.mean()
         return var+1
     def get_weight_mean_var(self):

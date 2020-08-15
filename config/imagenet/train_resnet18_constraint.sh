@@ -1,12 +1,13 @@
 python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 4  \
     ./data/imagenet  \
     --norm_layer $3 \
-    --mixed_precision False \
-    --log_dir imagenet/constraint_20+norm_layer_+$3 \
+    --mixed_precision True \
+    --opt-level O1 \
+    --log_dir imagenet/constraint_20+norm_layer_+$3+cweight+$4+cdecay+$5\
     --epochs 120 \
     --constraint_lr 0.01 \
-    --constraint_decay 1 \
-    --lambda_constraint_weight 1 \
+    --constraint_decay $5 \
+    --lambda_constraint_weight $4 \
     --lambda_weight_mean 1 \
     --decrease_affine_lr 1 \
     --sample_noise False \

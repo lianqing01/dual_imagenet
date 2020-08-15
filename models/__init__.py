@@ -18,3 +18,4 @@ except:
 from .constraint_bn_v2 import *
 from .constraint_bn_v2_mu_v1 import *
 from .batchnorm import *
+from .constraint_bn_v2_notheta import *

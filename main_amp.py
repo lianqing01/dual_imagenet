@@ -1,5 +1,6 @@
 import argparse
 import os
+import math
 import shutil
 import time
 
@@ -102,6 +103,9 @@ def parse():
                         help='enabling apex sync BN.')
     parser.add_argument('--norm_layer', default=None, type=str)
 
+    parser.add_argument('--warmup_noise', default=None, type=str)
+    parser.add_argument('--warmup_scale', default=10, type=float)
+
     parser.add_argument('--sample_noise', default=False)
     parser.add_argument('--noise_std_mean', default=0, type=float)
     parser.add_argument('--noise_std_var', default=0, type=float)
@@ -115,6 +119,10 @@ def parse():
     parser.add_argument('--channels-last', type=bool, default=False)
     parser.add_argument('--log_dir', default="", type=str)
     args = parser.parse_args()
+    if args.warmup_noise is not None:
+        args.warmup_noise = args.warmup_noise.split(",")[:-1]
+        args.warmup_noise = [int(i) for i in args.warmup_noise]
+
     return args
 
 def main():
@@ -228,7 +236,8 @@ def main():
     criterion = nn.CrossEntropyLoss().cuda()
 
     # Optionally resume from a checkpoint
-    if args.resume:
+    print(args.resume)
+    if args.resume != '':
         # Use a local scope to avoid dangling references
         def resume():
             if os.path.isfile(args.resume):
@@ -311,6 +320,14 @@ def main():
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
+        if args.warmup_noise is not None:
+            if epoch in args.warmup_noise:
+
+                for m in model.modules():
+                    if isinstance(m, norm_layer):
+                        m.noise_std_mean *= math.sqrt(args.warmup_scale)
+                        m.noise_std_var *= math.sqrt(args.warmup_scale)
+
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch)
@@ -592,9 +609,9 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 40
+    factor = epoch // 30
 
-    if epoch >= 100:
+    if epoch >= 80:
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
