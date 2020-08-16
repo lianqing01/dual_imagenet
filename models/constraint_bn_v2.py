@@ -122,16 +122,18 @@ class Constraint_Norm(nn.Module):
         self.old_gamma_ = self.gamma_
         self.var = self.var / self.tracking_times
         self.var -= 1
-        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps)).data
+        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps) - self.eps).data
 
     def _initialize_affine(self, resume=None):
         #temp = self.post_affine_layer.u_.data / (self.old_gamma_.data + self.eps)
         #self.post_affine_layer.u_.data.copy_(temp * self.gamma_.data))
         if resume is not None:
 
-            self.post_affine_layer.u_.data*= torch.sqrt(self.gamma_**2 + self.eps) / torch.sqrt(self.old_gamma_**2 + self.eps)
+            self.post_affine_layer.u_.data = self.post_affine_layer.u_ * \
+                            torch.sqrt(self.gamma_**2 + self.eps) / torch.sqrt(self.old_gamma_**2 + self.eps)
 
-            self.post_affine_layer.c_.data+= (self.post_affine_layer.u_ * (self.mu_ - self.old_mu_) / torch.sqrt(self.gamma_**2 + self.eps))
+            self.post_affine_layer.c_.data = self.post_affine_layer.c_ + \
+                        (self.post_affine_layer.u_ * (self.mu_ - self.old_mu_) / torch.sqrt(self.gamma_**2 + self.eps))
 
 
         #self.post_affine_layer.c_.data -= (temp -temp1)
