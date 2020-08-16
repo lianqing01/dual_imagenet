@@ -114,15 +114,15 @@ class Constraint_Norm(nn.Module):
 
     def _initialize_mu(self, with_affine=False):
         self.mean = self.mean / self.tracking_times
-        self.old_mu_ = self.mu_
+        self.old_mu_ = self.mu_.clone()
 
         self.mu_.data += self.mean.view(self.mu_.size())  * torch.sqrt(self.gamma_**2 + self.eps)
 
     def _initialize_gamma(self, with_affine=False):
-        self.old_gamma_ = self.gamma_
+        self.old_gamma_ = self.gamma_.clone()
         self.var = self.var / self.tracking_times
         self.var -= 1
-        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps) - self.eps).data
+        self.gamma_.data = torch.sqrt((self.var.view(self.gamma_.size())+1) * (self.gamma_**2+self.eps) ).data
 
     def _initialize_affine(self, resume=None):
         #temp = self.post_affine_layer.u_.data / (self.old_gamma_.data + self.eps)
