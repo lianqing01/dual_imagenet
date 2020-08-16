@@ -423,6 +423,8 @@ def main():
 
     for m in model.modules():
         if isinstance(m, norm_layer):
+            m.lagrangian.lambda_.data.fill_(0)
+            m.lagrangian.xi_.data.fill_(0)
             m.lagrangian.rho = args.lag_rho
 
     with torch.no_grad():

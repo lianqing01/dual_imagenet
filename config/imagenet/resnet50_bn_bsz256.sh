@@ -15,4 +15,5 @@ python -m torch.distributed.launch --nproc_per_node=$1 \
     --noise_std_mean $4 \
     --noise_std_var $4 \
     --warmup_noise $5 \
-    --pretrained 
+    --pretrained \
+    ${@:6}

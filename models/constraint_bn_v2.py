@@ -145,9 +145,6 @@ class Constraint_Norm(nn.Module):
 
         # mean
 
-        x_ = (x - self.mu_) / torch.sqrt(self.gamma_**2 + self.eps)
-        mean = self.lagrangian.get_weighted_mean(x_, self.norm_dim)
-        var = self.lagrangian.get_weighted_var(x_, self.gamma_, self.norm_dim)
 
 
         if self.pre_affine:
@@ -168,6 +165,8 @@ class Constraint_Norm(nn.Module):
 
                 x = x / torch.sqrt(self.gamma_**2 + self.eps)
 
+        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+        var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
         self.mean += mean.detach()
         self.var += var.detach()
 
