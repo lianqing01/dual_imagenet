@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+
+
 python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 4  \
     ./data/imagenet  \
     --norm_layer $3 \
@@ -14,4 +17,5 @@ python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp
     --noise_data_dependent False \
     --noise_mean_std 0 \
     --noise_var_std 0 \
+    ${@:6}
 
