@@ -152,7 +152,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=1)
+    parser.add_argument('--grad_clip', default=0.5)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -758,7 +758,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         for p in model.parameters():
             if p.grad.max() > p_grad:
                 p_grad = p.grad.max()
-        if p_grad > 1:
+        if args.local_rank == 0 and p_grad > 1:
             logger.info("param max grad: {}".format(p_grad))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 

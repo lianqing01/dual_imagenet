@@ -219,6 +219,7 @@ def parse():
 
 
     args = parser.parse_args()
+    args.constraint_lr = args.lr * 0.05 
 
     # For wamup noise
     if args.warmup_noise is not None:
@@ -362,10 +363,11 @@ def main():
             if os.path.isfile(args.resume):
                 logger.info("=> loading checkpoint '{}'".format(args.resume))
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
+                args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
                 model.load_state_dict(checkpoint['state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                logger.info("=> loaded checkpoint '{}' (epoch {})"
+                logger.info("=> loaded checkpoint '{} (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
@@ -423,11 +425,13 @@ def main():
 
     for m in model.modules():
         if isinstance(m, norm_layer):
+            m.lagrangian.lambda_.data.fill_(0)
+            m.lagrangian.xi_.data.fill_(0)
             m.lagrangian.rho = args.lag_rho
 
     with torch.no_grad():
         print("===initializtion====")
-        _initialize(train_loader, model, criterion, optimizer, 0)
+        #_initialize(train_loader, model, criterion, optimizer, 0)
     device = torch.device("cuda")
 
 
@@ -565,26 +569,6 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                 # compute output
                 output = model(input)
 
-                # compute gradient and do SGD step
-                # constraint loss
-                weight_mean = 0
-                weight_var = 0
-                for m in model.modules():
-                    if isinstance(m, Constraint_Lagrangian):
-                        weight_mean_, weight_var_ =  m.get_weight_mean_var()
-                        weight_mean += weight_mean_
-                        weight_var += weight_var_
-
-                constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
-                constraint_loss = args.lambda_constraint_weight * constraint_loss
-
-                # optimize constraint loss
-
-
-
-
-
-
                 input, target = prefetcher.next()
                 if i%args.print_freq == 0:
                     if args.local_rank == 0:
@@ -600,25 +584,7 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                         curr_idx = epoch * len(train_loader) + i
 
                         # get the constraint weight
-                        lambda_ = []
-                        xi_ = []
-                        for m in model.modules():
-                            if isinstance(m, Constraint_Lagrangian):
-                                lambda_.append(m.lambda_.data.abs().mean())
-                                xi_.append(m.xi_.data.abs().mean())
-                        lambda_ = torch.max(torch.stack(lambda_))
-                        xi_ = torch.max(torch.stack(xi_))
 
-
-                    # Every print_freq iterations, check the loss, accuracy, and speed.
-                    # For best performance, it doesn't make sense to print these metrics every
-                    # iteration, since they incur an allreduce and some host<->device syncs.
-
-                    # Measure accuracy
-
-                    # Average loss and accuracy across processes for logging
-
-                    # to_python_float incurs a host<->device sync
 
                     torch.cuda.synchronize()
                     batch_time.update((time.time() - end)/args.print_freq)
@@ -634,10 +600,6 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                             'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                             'Speed {3:.3f} ({4:.3f})\t'
                             'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
-                            'Constraint mean {corat_mean:.4f}\t'
-                            'Constraint var {corat_var:.4f}\t'
-                            'Constraint lambda {corat_lambda:.4f}\t'
-                            'Constraint xi {corat_xi:.4f}\t'
                             'mean {mean:.4f}\t'
                             'var {var:.4f}\t'
                             'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
@@ -646,10 +608,6 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                             args.world_size*args.batch_size/batch_time.val,
                             args.world_size*args.batch_size/batch_time.avg,
                             batch_time=batch_time,
-                            corat_mean = -1 * weight_mean.item(),
-                            corat_var = -1 * weight_var.item(),
-                            corat_lambda = lambda_,
-                            corat_xi = xi_,
                             mean = mean,
                             var = var,
                             loss=losses, top1=top1, top5=top5))
@@ -751,8 +709,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # for param in model.parameters():
         #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
-
         optimizer.step()
+
 
         if i%args.print_freq == 0:
             mean = []
@@ -930,10 +888,8 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 20
+    factor = epoch // 15
 
-    if epoch >= 100:
-        factor = factor + 1
 
     lr = args.lr*(0.1**factor)
     constraint_lr = args.constraint_lr * (0.1 ** factor)
