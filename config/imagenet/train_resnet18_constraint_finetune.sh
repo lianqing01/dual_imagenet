@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 
-python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint_finetune.py -a resnet_constraint18 --b 64 --workers 4  \
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint_finetune.py -a resnet_constraint18 --b 512 --workers 4  \
     ./data/imagenet  \
     --norm_layer $3 \
-    --mixed_precision False \
-    --lr $6 \
-    --log_dir imagenet/constraint_20+norm_layer_+$3+noise_$4+warmup_+$5+lr_$6 \
-    --epochs 120 \
+    --mixed_precision True \
+    --opt-level O1 \
+    --lr $4 \
+    --log_dir imagenet/constraint_20+norm_layer_+$3+lr$4+noise_$5+weight_+$6+warmup$7 \
+    --epochs 50 \
     --constraint_lr 0.001 \
     --constraint_decay 1 \
-    --lambda_constraint_weight 2 \
+    --lambda_constraint_weight $6 \
     --lambda_weight_mean 1 \
     --decrease_affine_lr 1 \
     --sample_noise True \
     --noise_data_dependent False \
-    --noise_mean_std $4 \
-    --noise_var_std $4 \
-    --warmup_noise $5 \
-    --resume $7
+    --noise_mean_std $5 \
+    --noise_var_std $5 \
+    --warmup_noise $7 \
+    --resume $8
 

@@ -309,6 +309,8 @@ def main():
 
     # Scale learning rate based on global batch size
     args.lr = args.lr*float(args.batch_size*args.world_size)/256.
+
+    args.constraint_lr = args.lr * 0.05 
     constraint_param = []
     for m in model.modules():
         if isinstance(m, Constraint_Lagrangian):
@@ -365,7 +367,7 @@ def main():
                 best_prec1 = checkpoint['best_prec1']
                 model.load_state_dict(checkpoint['state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer'])
-                logger.info("=> loaded checkpoint '{}' (epoch {})"
+                logger.info("=> loaded checkpoint '{} (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
                 logger.info("=> no checkpoint found at '{}'".format(args.resume))
@@ -707,8 +709,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # for param in model.parameters():
         #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
-
         optimizer.step()
+
 
         if i%args.print_freq == 0:
             mean = []
@@ -886,10 +888,8 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 20
+    factor = epoch // 15
 
-    if epoch >= 100:
-        factor = factor + 1
 
     lr = args.lr*(0.1**factor)
     constraint_lr = args.constraint_lr * (0.1 ** factor)
