@@ -27,6 +27,14 @@ from torch._utils import (_flatten_dense_tensors, _take_tensors,
                           _unflatten_dense_tensors)
 
 
+def adjust_constraint_weight(args, curr_iter, max_iter):
+    if args.max_lag_weight != 0:
+        weight = args.lambda_constraint_weight + 1/2. * (args.max_lag_weight - args.lambda_constraint_weight) * \
+                (1 + math.cos((max_iter - curr_iter) / max_iter * math.pi))
+        return weight
+    else:
+        return args.lambda_constraint_weight
+
 def _allreduce_coalesced(tensors, world_size, bucket_size_mb=-1):
     if bucket_size_mb > 0:
         bucket_size_bytes = bucket_size_mb * 1024 * 1024
@@ -144,7 +152,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=1)
+    parser.add_argument('--grad_clip', default=0.5)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -191,12 +199,7 @@ def parse():
     parser.add_argument('--warmup_scale', default=10, type=float)
     parser.add_argument('--lag_rho', default=0, type=float)
     parser.add_argument('--warmup_roi', default=None, type=str)
-
-
-
-
-
-
+    parser.add_argument('--max_lag_weight', default=0, type=float)
 
 
     # dataset
@@ -372,7 +375,7 @@ def main():
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
-                model.load_state_dict(checkpoint['state_dict'])
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
                 logger.info("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
@@ -718,6 +721,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
 
         adjust_learning_rate(optimizer, epoch, i, len(train_loader))
+        lag_weight = adjust_constraint_weight(args, epoch * len(train_loader) + i, args.epochs * len(train_loader))
 
         # compute output
         output = model(input)
@@ -735,7 +739,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 weight_var += weight_var_
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
-        constraint_loss = args.lambda_constraint_weight * constraint_loss
+        constraint_loss = lag_weight * constraint_loss
 
         # optimize constraint loss
 
@@ -749,6 +753,13 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 scaled_loss.backward()
         else:
             loss.backward()
+
+        p_grad = 0
+        for p in model.parameters():
+            if p.grad.max() > p_grad:
+                p_grad = p.grad.max()
+        if args.local_rank == 0 and p_grad > 1:
+            logger.info("param max grad: {}".format(p_grad))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
@@ -769,6 +780,15 @@ def train(train_loader, model, criterion, optimizer, epoch):
             curr_idx = epoch * len(train_loader)+i
 
             # get the constraint weight
+            lambda_ = []
+            xi_ = []
+            for m in model.modules():
+                if isinstance(m, Constraint_Lagrangian):
+                    lambda_.append(m.lambda_.data.abs().mean())
+                    xi_.append(m.xi_.data.abs().mean())
+            lambda_ = torch.max(torch.stack(lambda_))
+            xi_ = torch.max(torch.stack(xi_))
+
 
 
             # Every print_freq iterations, check the loss, accuracy, and speed.
@@ -801,6 +821,9 @@ def train(train_loader, model, criterion, optimizer, epoch):
             remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
             if args.local_rank == 0:
+                logger.info("lag_weight: {}".format(lag_weight))
+
+                logger.info("lambda: {} xi: {}".format(lambda_, xi_))
                 logger.info('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Speed {3:.3f} ({4:.3f})\t'
