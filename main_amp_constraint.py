@@ -755,11 +755,16 @@ def train(train_loader, model, criterion, optimizer, epoch):
             loss.backward()
 
         p_grad = 0
-        for p in model.parameters():
-            if p.grad.max() > p_grad:
-                p_grad = p.grad.max()
-        if args.local_rank == 0 and p_grad > 1:
-            logger.info("param max grad: {}".format(p_grad))
+        p_lag_grad = 0
+        for p_name, p in model.named_parameters():
+            if 'lagrangian' in p_name:
+                if p.grad.max() > p_lag_grad:
+                    p_lag_grad = p.grad.max()
+            else:
+                if p.grad.max() > p_grad:
+                    p_grad = p.grad.max()
+        if args.local_rank == 0:
+            logger.info("param max grad: {} lag max_grad {}".format(p_grad, p_lag_grad))
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
