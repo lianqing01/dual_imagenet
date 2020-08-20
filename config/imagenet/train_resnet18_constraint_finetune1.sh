@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 
-python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint_finetune.py -a resnet_constraint18 --b 256 --workers 4  \
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint_finetune1.py -a resnet_constraint18 --b 256 --workers 4  \
     ./data/imagenet  \
     --norm_layer $3 \
-    --mixed_precision True \
+    --mixed_precision False \
     --opt-level O1 \
     --lr $4 \
     --log_dir imagenet/constraint_20+norm_layer_+$3+lr$4+noise_$5+weight_+$6+warmup$7 \

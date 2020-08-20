@@ -365,7 +365,7 @@ def main():
             if os.path.isfile(args.resume):
                 logger.info("=> loading checkpoint '{}'".format(args.resume))
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
-                #args.start_epoch = checkpoint['epoch']
+                args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
                 model.load_state_dict(checkpoint['state_dict'])
                 optimizer.load_state_dict(checkpoint['optimizer'])
@@ -434,7 +434,7 @@ def main():
 
     with torch.no_grad():
         print("===initializtion====")
-        _initialize(train_loader, model, criterion, optimizer, 0)
+        #_initialize(train_loader, model, criterion, optimizer, 0)
     device = torch.device("cuda")
 
 
@@ -891,7 +891,7 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    factor = epoch // 20
+    factor = epoch // 10
 
 
     lr = args.lr*(0.1**factor)
