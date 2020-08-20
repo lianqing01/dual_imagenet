@@ -6,7 +6,7 @@ python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp
     --mixed_precision False \
     --lr $4 \
     --log_dir imagenet/constraint_20+norm_layer_+$3+lr$4+noise_$5+weight_+$6+warmup$7 \
-    --epochs 40 \
+    --epochs 50 \
     --constraint_lr 0.001 \
     --constraint_decay 1 \
     --lambda_constraint_weight $6 \
