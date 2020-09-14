@@ -1,25 +1,87 @@
 import argparse
 import os
 import shutil
+import copy
 import time
 
 import wandb
 import torch
-from models.batchrenorm import BatchRenorm2d
 import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
-import torch.optim
+import torch.optim as optim
 import torch.utils.data
 import torch.utils.data.distributed
-from models.group_norm import GroupNorm
+from models.constraint_bn_v2 import *
 from utils import create_logger
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models
-import numpy as np
+import math
 
+from collections import OrderedDict
+
+import torch.distributed as dist
+from torch._utils import (_flatten_dense_tensors, _take_tensors,
+                          _unflatten_dense_tensors)
+
+
+def adjust_constraint_weight(args, curr_iter, max_iter):
+    if args.max_lag_weight != 0:
+        weight = args.lambda_constraint_weight + 1/2. * (args.max_lag_weight - args.lambda_constraint_weight) * \
+                (1 + math.cos((max_iter - curr_iter) / max_iter * math.pi))
+        return weight
+    else:
+        return args.lambda_constraint_weight
+
+def _allreduce_coalesced(tensors, world_size, bucket_size_mb=-1):
+    if bucket_size_mb > 0:
+        bucket_size_bytes = bucket_size_mb * 1024 * 1024
+        buckets = _take_tensors(tensors, bucket_size_bytes)
+    else:
+        buckets = OrderedDict()
+        for tensor in tensors:
+            tp = tensor.type()
+            if tp not in buckets:
+                buckets[tp] = []
+            buckets[tp].append(tensor)
+        buckets = buckets.values()
+
+    for bucket in buckets:
+        flat_tensors = _flatten_dense_tensors(bucket)
+        dist.all_reduce(flat_tensors)
+        flat_tensors.div_(world_size)
+        for tensor, synced in zip(
+                bucket, _unflatten_dense_tensors(flat_tensors, bucket)):
+            tensor.copy_(synced)
+
+
+def allreduce_params(params, coalesce=True, bucket_size_mb=-1):
+    weights = [
+        param.data for param in params
+        if param.data is not None
+    ]
+    world_size = dist.get_world_size()
+    if coalesce:
+        _allreduce_coalesced(weights, world_size, bucket_size_mb)
+    else:
+        for tensor in weights:
+            dist.all_reduce(tensor.div_(world_size))
+
+
+def str2bool(v):
+        if isinstance(v, bool):
+            return v
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+import numpy as np
 def str2bool(v):
         if isinstance(v, bool):
             return v
@@ -60,14 +122,14 @@ def parse():
                      if name.islower() and not name.startswith("__")
                      and callable(models.__dict__[name]))
 
-    parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
+    parser = argparse.ArgumentParser(description='PyTorch Imagemodel Training')
     parser.add_argument('data', metavar='DIR',
                         help='path to dataset')
-    parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet18',
+    parser.add_argument('--arch', '-a', metavar='ARCH', default='resmodel18',
                         choices=model_names,
                         help='model architecture: ' +
                         ' | '.join(model_names) +
-                        ' (default: resnet18)')
+                        ' (default: resmodel18)')
     parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                         help='number of data loading workers (default: 4)')
     parser.add_argument('--epochs', default=90, type=int, metavar='N',
@@ -80,7 +142,7 @@ def parse():
                         metavar='LR', help='Initial learning rate.  Will be scaled by <global batch size>/256: args.lr = args.lr*float(args.batch_size*args.world_size)/256.  A warmup schedule will also be applied over the first 5 epochs.')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
-    parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float,
+    parser.add_argument('--decay', '--wd', default=1e-4, type=float,
                         metavar='W', help='weight decay (default: 1e-4)')
     parser.add_argument('--print-freq', '-p', default=10, type=int,
                         metavar='N', help='print frequency (default: 10)')
@@ -90,8 +152,7 @@ def parse():
                         help='evaluate model on validation set')
     parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                         help='use pre-trained model')
-    parser.add_argument('--grad_clip', default=3)
-    parser.add_argument('--mixed_precision', default=True, type=str2bool)
+    parser.add_argument('--grad_clip', default=1)
 
     parser.add_argument('--prof', default=-1, type=int,
                         help='Only run 10 iterations for profiling.')
@@ -100,18 +161,80 @@ def parse():
     parser.add_argument("--local_rank", default=0, type=int)
     parser.add_argument('--sync_bn', action='store_true',
                         help='enabling apex sync BN.')
+    parser.add_argument('--optim_loss', default="cross_entropy")
+    parser.add_argument('--num_classes', default=10, type=int)
+    parser.add_argument('--print_freq', default=100, type=int)
+    parser.add_argument('--mixed_precision', default=True, type=str2bool)
 
-    parser.add_argument('--sample_noise', default=False)
+
+
+    # param for constraint norm
+    parser.add_argument('--lambda_constraint_weight', default=0, type=float)
+    parser.add_argument('--constraint_lr', default=0.1, type=float)
+    parser.add_argument('--constraint_decay', default=1e-3, type=float)
+    parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
+    parser.add_argument('--decay_constraint', default=-1, type=int)
+    parser.add_argument('--update_affine_only', default=False, type=str2bool)
+
+    # two layer
+    parser.add_argument('--two_layer', action='store_true', default=False)
+
+    # for lr scheduler
+    parser.add_argument('--lr_ReduceLROnPlateau', default=False, type=str2bool)
+    parser.add_argument('--schedule', default=[100,150])
+    parser.add_argument('--decrease_affine_lr', default=1, type=float)
+    parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
+    parser.add_argument('--affine_momentum', default=0.9, type=float)
+    parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
+
+    # for adding noise
+    parser.add_argument('--sample_noise', default=False, type=str2bool)
+    parser.add_argument('--noise_data_dependent', default=False, type=str2bool)
+    parser.add_argument('--noise_std', default=0, type=float)
+    parser.add_argument('--lambda_noise_weight', default=1, type=float)
     parser.add_argument('--noise_mean_std', default=0, type=float)
     parser.add_argument('--noise_var_std', default=0, type=float)
-    parser.add_argument('--fixup', default=False)
+    parser.add_argument('--norm_layer', default=None, type=str)
+    parser.add_argument('--warmup_noise', default=None, type=str)
+    parser.add_argument('--warmup_scale', default=10, type=float)
+    parser.add_argument('--lag_rho', default=0, type=float)
+    parser.add_argument('--warmup_roi', default=None, type=str)
+    parser.add_argument('--max_lag_weight', default=0, type=float)
+
+
+    # dataset
+    parser.add_argument('--dataset', default='CIFAR10', type=str)
+    parser.add_argument('--add_grad_noise', default=False, type=str2bool)
+    parser.add_argument('--get_norm_freq', default=1, type=int)
+
+
+
+    # pretrain
+    parser.add_argument('--initialize_by_pretrain', action='store_true', default=False)
+    parser.add_argument('--max_pretrain_epoch', default=20, type=int)
+    parser.add_argument('--add_noise', default=None, type=str)
+    parser.add_argument('--lambda_weight_mean', default=1, type=float)
+
+
 
     parser.add_argument('--opt-level', type=str)
     parser.add_argument('--keep-batchnorm-fp32', type=str, default=None)
     parser.add_argument('--loss-scale', type=str, default=None)
     parser.add_argument('--channels-last', type=bool, default=False)
     parser.add_argument('--log_dir', default="", type=str)
+
     args = parser.parse_args()
+
+    # For wamup noise
+    if args.warmup_noise is not None:
+        args.warmup_noise = args.warmup_noise.split(",")[:-1]
+        args.warmup_noise = [int(i) for i in args.warmup_noise]
+    if args.warmup_roi is not None:
+        args.warmup_roi = args.warmup_roi.split(",")[:-1]
+        args.warmup_roi = [int(i) for i in args.warmup_roi]
+
+
+
     return args
 
 def main():
@@ -129,7 +252,7 @@ def main():
 
     args.distributed = False
     if 'WORLD_SIZE' in os.environ:
-        args.distributed = int(os.environ['WORLD_SIZE']) > 1
+        args.distributed = int(os.environ['WORLD_SIZE']) >= 1
 
     args.log_dir = args.log_dir + '_' + time.asctime(time.localtime(time.time())).replace(" ", "-")
     os.makedirs('results/{}'.format(args.log_dir), exist_ok=True)
@@ -169,35 +292,65 @@ def main():
         memory_format = torch.contiguous_format
 
     # create model
+
+    import models
+    logger.info('==> Building model..')
+    global norm_layer
+    print(args.norm_layer)
+    if args.norm_layer is not None and args.norm_layer != 'False':
+        if args.norm_layer == 'cbn':
+            norm_layer =  models.__dict__['Constraint_Norm2d']
+        elif args.norm_layer == 'cbn_mu_v1':
+            norm_layer = models.__dict__['Constraint_Norm_mu_v1_2d']
+        elif args.norm_layer == 'cbn_notheta':
+            norm_layer = models.__dict__['Constraint_Norm_notheta_2d']
+        else:
+            norm_layer = None
+        print(norm_layer)
+
     if args.pretrained:
         logger.info("=> using pre-trained model '{}'".format(args.arch))
-        model = models.__dict__[args.arch](pretrained=True)
+        model = models.__dict__[args.arch](pretrained=True, norm_layer=norm_layer)
     else:
         logger.info("=> creating model '{}'".format(args.arch))
-        model = models.__dict__[args.arch]()
+        model = models.__dict__[args.arch](norm_layer=norm_layer)
 
-    if args.sync_bn:
-        import apex
-        logger.info("using apex synced BN")
-        model = apex.parallel.convert_syncbn_model(model)
+    model = model
 
     model = model.cuda()
 
     # Scale learning rate based on global batch size
     args.lr = args.lr*float(args.batch_size*args.world_size)/256.
+    constraint_param = []
+    for m in model.modules():
+        if isinstance(m, Constraint_Lagrangian):
+            m.weight_decay = args.constraint_decay
+            m.get_optimal_lagrangian = args.get_optimal_lagrangian
+            constraint_param.extend(list(map(id, m.parameters())))
 
-    optimizer = torch.optim.SGD(model.parameters(), args.lr,
-                                    momentum=args.momentum,
-                                    weight_decay=args.weight_decay)
+
+    if args.decrease_affine_lr == 1:
+        origin_param = filter(lambda p:id(p) not in constraint_param, model.parameters())
+
+        optimizer = optim.SGD([
+                        {'params': origin_param},
+                        {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
+                                'lr': args.constraint_lr,
+                                'weight_decay': args.constraint_decay},
+                        ],
+                        lr=args.lr, momentum=0.9,
+                        weight_decay=args.decay)
+
+
 
     # Initialize Amp.  Amp accepts either values or strings for the optional override arguments,
     # for convenient interoperation with argparse.
     if args.mixed_precision:
         model, optimizer = amp.initialize(model, optimizer,
-                                      opt_level=args.opt_level,
-                                      keep_batchnorm_fp32=False,
-                                      loss_scale=args.loss_scale
-                                      )
+                                        opt_level=args.opt_level,
+                                        keep_batchnorm_fp32=args.keep_batchnorm_fp32,
+                                        loss_scale=args.loss_scale
+                                        )
 
     # For distributed training, wrap the model with apex.parallel.DistributedDataParallel.
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
@@ -222,8 +375,7 @@ def main():
                 checkpoint = torch.load(args.resume, map_location = lambda storage, loc: storage.cuda(args.gpu))
                 args.start_epoch = checkpoint['epoch']
                 best_prec1 = checkpoint['best_prec1']
-                model.load_state_dict(checkpoint['state_dict'])
-                optimizer.load_state_dict(checkpoint['optimizer'])
+                model.load_state_dict(checkpoint['state_dict'], strict=False)
                 logger.info("=> loaded checkpoint '{}' (epoch {})"
                       .format(args.resume, checkpoint['epoch']))
             else:
@@ -277,11 +429,25 @@ def main():
     if args.evaluate:
         validate(val_loader, model, criterion)
         return
-    try:
-        from models import SyncBatchNorm
-    except:
-        pass
+
+    #initialization
+
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            m.lagrangian.rho = args.lag_rho
+    with torch.no_grad():
+        if not args.resume:
+            print("===initializtion====")
+            _initialize(train_loader, model, criterion, optimizer, 0)
     device = torch.device("cuda")
+
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            m.sample_noise = args.sample_noise
+            m.sample_mean = torch.zeros(m.num_features).to(device)
+            m.add_noise = args.add_noise
+            m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
+            m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
 
 
     for epoch in range(args.start_epoch, args.epochs):
@@ -289,10 +455,22 @@ def main():
             train_sampler.set_epoch(epoch)
 
         # train for one epoch
+        if args.warmup_noise is not None:
+            if epoch in args.warmup_noise:
+
+                for m in model.modules():
+                    if isinstance(m, norm_layer):
+                        m.sample_mean_std *= math.sqrt(args.warmup_scale)
+                        m.sample_var_std *= math.sqrt(args.warmup_scale)
+
+
+
+
         train(train_loader, model, criterion, optimizer, epoch)
 
         # evaluate on validation set
         prec1 = validate(epoch, val_loader, model, criterion)
+
 
         # remember best prec@1 and save checkpoint
         if args.local_rank == 0:
@@ -360,12 +538,176 @@ class data_prefetcher():
         self.preload()
         return input, target
 
+def _initialize(train_loader, model, criterion, optimizer, epoch):
+    batch_time = AverageMeter()
+    losses = AverageMeter()
+    top1 = AverageMeter()
+    top5 = AverageMeter()
+    train_loss_avg = 0
+    train_loss = AverageMeter()
+    correct = 0
+    total = 0
+    mean = 0
+    var = 0
+    lambda_ = 0
+    xi_ = 0
+
+
+    # switch to train mode
+    model.train()
+    end = time.time()
+    num_norm = 0
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            m.reset_norm_statistics()
+            num_norm+=1
+    print("num_norm : {}".format(num_norm))
+
+    prefetcher = data_prefetcher(train_loader)
+    input, target = prefetcher.next()
+    i = 0
+    for layer in range(num_norm):
+        for idx in range(2):
+            while input is not None:
+                i += 1
+                if i>=11:
+                    i = 0
+                    break
+                # compute output
+                output = model(input)
+
+                # compute gradient and do SGD step
+                # constraint loss
+                weight_mean = 0
+                weight_var = 0
+                for m in model.modules():
+                    if isinstance(m, Constraint_Lagrangian):
+                        weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                        weight_mean += weight_mean_
+                        weight_var += weight_var_
+
+                constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
+                constraint_loss = args.lambda_constraint_weight * constraint_loss
+
+                # optimize constraint loss
+
+
+
+
+
+
+                input, target = prefetcher.next()
+                if i%args.print_freq == 0:
+                    if args.local_rank == 0:
+                        mean = []
+                        var = []
+                        for m in model.modules():
+                            if isinstance(m, norm_layer):
+                                mean_, var_ = m.get_mean_var()
+                                mean.append(mean_.abs())
+                                var.append(var_.abs())
+                        mean = torch.mean(torch.stack(mean))
+                        var = torch.mean(torch.stack(var))
+                        curr_idx = epoch * len(train_loader) + i
+
+                        # get the constraint weight
+                        lambda_ = []
+                        xi_ = []
+                        for m in model.modules():
+                            if isinstance(m, Constraint_Lagrangian):
+                                lambda_.append(m.lambda_.data.abs().mean())
+                                xi_.append(m.xi_.data.abs().mean())
+                        lambda_ = torch.max(torch.stack(lambda_))
+                        xi_ = torch.max(torch.stack(xi_))
+
+
+                    # Every print_freq iterations, check the loss, accuracy, and speed.
+                    # For best performance, it doesn't make sense to print these metrics every
+                    # iteration, since they incur an allreduce and some host<->device syncs.
+
+                    # Measure accuracy
+
+                    # Average loss and accuracy across processes for logging
+
+                    # to_python_float incurs a host<->device sync
+
+                    torch.cuda.synchronize()
+                    batch_time.update((time.time() - end)/args.print_freq)
+                    end = time.time()
+                    remain_iter = args.epochs * len(train_loader) - (epoch*len(train_loader) + i)
+                    remain_time = remain_iter * batch_time.avg
+                    t_m, t_s = divmod(remain_time, 60)
+                    t_h, t_m = divmod(t_m, 60)
+                    remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
+
+                    if args.local_rank == 0:
+                        logger.info('Epoch: [{0}][{1}/{2}]\t'
+                            'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
+                            'Speed {3:.3f} ({4:.3f})\t'
+                            'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
+                            'Constraint mean {corat_mean:.4f}\t'
+                            'Constraint var {corat_var:.4f}\t'
+                            'Constraint lambda {corat_lambda:.4f}\t'
+                            'Constraint xi {corat_xi:.4f}\t'
+                            'mean {mean:.4f}\t'
+                            'var {var:.4f}\t'
+                            'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
+                            'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
+                            epoch, i, len(train_loader),
+                            args.world_size*args.batch_size/batch_time.val,
+                            args.world_size*args.batch_size/batch_time.avg,
+                            batch_time=batch_time,
+                            corat_mean = -1 * weight_mean.item(),
+                            corat_var = -1 * weight_var.item(),
+                            corat_lambda = lambda_,
+                            corat_xi = xi_,
+                            mean = mean,
+                            var = var,
+                            loss=losses, top1=top1, top5=top5))
+                        logger.info("remain time:  {}".format(remain_time))
+
+
+            if idx == 0:
+                track_layer = 0
+                for m in model.modules():
+                    if isinstance(m, norm_layer):
+                        if track_layer == layer:
+                            m._initialize_mu()
+                            break
+                        else:
+                            track_layer +=1
+            elif idx == 1:
+                track_layer = 0
+                for m in model.modules():
+                    if isinstance(m, norm_layer):
+                        if track_layer == layer:
+                            m._initialize_gamma()
+                            break
+                        else:
+                            track_layer += 1
+
+            if args.world_size > 1:
+                allreduce_params(model.parameters())
+            for m in model.modules():
+                if isinstance(m, norm_layer):
+                    m.reset_norm_statistics()
+
+
 
 def train(train_loader, model, criterion, optimizer, epoch):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
     top5 = AverageMeter()
+    train_loss_avg = 0
+    train_loss = AverageMeter()
+    correct = 0
+    total = 0
+    mean = 0
+    var = 0
+    lambda_ = 0
+    xi_ = 0
+
 
     # switch to train mode
     model.train()
@@ -376,47 +718,117 @@ def train(train_loader, model, criterion, optimizer, epoch):
     i = 0
     while input is not None:
         i += 1
-        if args.prof >= 0 and i == args.prof:
-            logger.info("Profiling begun at iteration {}".format(i))
-            torch.cuda.cudart().cudaProfilerStart()
 
-        if args.prof >= 0: torch.cuda.nvtx.range_push("Body of iteration {}".format(i))
 
         adjust_learning_rate(optimizer, epoch, i, len(train_loader))
+        lag_weight = adjust_constraint_weight(args, epoch * len(train_loader) + i, args.epochs * len(train_loader))
 
         # compute output
-        if args.prof >= 0: torch.cuda.nvtx.range_push("forward")
         output = model(input)
-        if args.prof >= 0: torch.cuda.nvtx.range_pop()
         loss = criterion(output, target)
-
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
+        # constraint loss
+        weight_mean = 0
+        weight_var = 0
+        for m in model.modules():
+            if isinstance(m, Constraint_Lagrangian):
+                weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                weight_mean += weight_mean_
+                weight_var += weight_var_
 
-        if args.prof >= 0: torch.cuda.nvtx.range_push("backward")
+        constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
+        constraint_loss = lag_weight * constraint_loss
+
+        # optimize constraint loss
+
+        train_loss.update(loss.item())
+        train_loss_avg += loss.item()
+        if args.distributed:
+                reduced_loss = reduce_tensor(loss.data)
+        else:
+            reduced_loss = loss.data
+
+        # to_python_float incurs a host<->device sync
+        losses.update(to_python_float(reduced_loss), input.size(0))
+
+        loss += constraint_loss
+
+
         if args.mixed_precision:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
-        if args.prof >= 0: torch.cuda.nvtx.range_pop()
-        #torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
+        p_grad = 0
+        p_lag_grad = 0
+        p_mu_grad = 0
+        p_gamma_grad = 0
+        p_affine_grad = 0
+        p_theta_grad = 0
+        param = ['lagrangian', 'mu_', 'gamma_', 'post_affine_layer']
+        max_grads = [p_lag_grad, p_mu_grad, p_gamma_grad, p_affine_grad]
+        max_param_name = None
+
+        for p_name, p in model.named_parameters():
+            max_grad = p.grad.abs().max()
+            is_theta = True
+            for idx, (pg_name, pg_grad) in enumerate(zip(param, max_grads)):
+                if pg_name in p_name:
+                    is_theta = False
+                    if max_grad > max_grads[idx]:
+                        max_grads[idx] = max_grad
+            if is_theta:
+                if max_grad > p_theta_grad:
+                    p_theta_grad = max_grad
+            if max_grad > p_grad:
+                p_grad = max_grad
+                max_param_name = p_name
+
+
+        if args.local_rank == 0:
+            to_log_str = ''
+            for pg_name, pg_grad in zip(param, max_grads):
+                to_log_str += "{}: {:.4f}\t".format(pg_name, pg_grad)
+            to_log_str += "theta: {:.4f}\t".format(p_theta_grad)
+            logger.info("param max grad: {:.4f} name: {} {}".format(p_grad, max_param_name, to_log_str))
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
 
         # for param in model.parameters():
         #     logger.info(param.data.double().sum().item(), param.grad.data.double().sum().item())
 
-        if args.prof >= 0: torch.cuda.nvtx.range_push("optimizer.step()")
         optimizer.step()
-        if args.prof >= 0: torch.cuda.nvtx.range_pop()
-        if 'brn' in args.arch:
-            for m in model.modules():
-                if isinstance(m, BatchRenorm2d):
-                    dist.all_reduce(m.running_mean.data.div_(args.world_size))
-                    dist.all_reduce(m.running_std.data.div_(args.world_size))
 
         if i%args.print_freq == 0:
+            mean = []
+            var = []
+            for m in model.modules():
+                if isinstance(m, norm_layer):
+                    mean_, var_ = m.get_mean_var()
+                    mean.append(mean_.abs())
+                    var.append(var_.abs())
+            mean = torch.mean(torch.stack(mean))
+            var = torch.mean(torch.stack(var))
+            curr_idx = epoch * len(train_loader)+i
+            for m in model.modules():
+                if isinstance(m, norm_layer):
+                    m.reset_norm_statistics()
+
+
+            # get the constraint weight
+            lambda_ = []
+            xi_ = []
+            for m in model.modules():
+                if isinstance(m, Constraint_Lagrangian):
+                    lambda_.append(m.lambda_.data.abs().mean())
+                    xi_.append(m.xi_.data.abs().mean())
+            lambda_ = torch.mean(torch.stack(lambda_))
+            xi_ = torch.mean(torch.stack(xi_))
+
+
+
             # Every print_freq iterations, check the loss, accuracy, and speed.
             # For best performance, it doesn't make sense to print these metrics every
             # iteration, since they incur an allreduce and some host<->device syncs.
@@ -426,14 +838,10 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
             # Average loss and accuracy across processes for logging
             if args.distributed:
-                reduced_loss = reduce_tensor(loss.data)
                 prec1 = reduce_tensor(prec1)
                 prec5 = reduce_tensor(prec5)
-            else:
-                reduced_loss = loss.data
 
             # to_python_float incurs a host<->device sync
-            losses.update(to_python_float(reduced_loss), input.size(0))
             top1.update(to_python_float(prec1), input.size(0))
             top5.update(to_python_float(prec5), input.size(0))
 
@@ -447,34 +855,48 @@ def train(train_loader, model, criterion, optimizer, epoch):
             remain_time = '{:02d}:{:02d}:{:02d}'.format(int(t_h), int(t_m), int(t_s))
 
             if args.local_rank == 0:
+                logger.info("lag_weight: {}".format(lag_weight))
+
+                logger.info("lambda: {} xi: {}".format(lambda_, xi_))
                 logger.info('Epoch: [{0}][{1}/{2}]\t'
                       'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
                       'Speed {3:.3f} ({4:.3f})\t'
                       'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
+                      'Constraint mean {corat_mean:.4f}\t'
+                      'Constraint var {corat_var:.4f}\t'
+                      'mean {mean:.4f}\t'
+                      'var {var:.4f}\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
                       'Prec@5 {top5.val:.3f} ({top5.avg:.3f})'.format(
                        epoch, i, len(train_loader),
                        args.world_size*args.batch_size/batch_time.val,
                        args.world_size*args.batch_size/batch_time.avg,
                        batch_time=batch_time,
+                       corat_mean = -1 * weight_mean.item(),
+                       corat_var = -1 * weight_var.item(),
+                       mean = mean,
+                       var = var,
                        loss=losses, top1=top1, top5=top5))
                 logger.info("remain time:  {}".format(remain_time))
-        if args.prof >= 0: torch.cuda.nvtx.range_push("prefetcher.next()")
+                lrs = []
+                for pg in optimizer.param_groups:
+                    lrs.append(pg['lr'])
+                logger.info("learning rate: {}".format(lrs))
+
         input, target = prefetcher.next()
-        if args.prof >= 0: torch.cuda.nvtx.range_pop()
-
-        # Pop range "Body of iteration {}".format(i)
-        if args.prof >= 0: torch.cuda.nvtx.range_pop()
-
-        if args.prof >= 0 and i == args.prof + 10:
-            logger.info("Profiling ended at iteration {}".format(i))
-            torch.cuda.cudart().cudaProfilerStop()
-            quit()
-
     if args.local_rank == 0:
         wandb.log({"train/acc_epoch": top1.avg}, step=epoch)
-        wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
         wandb.log({"train/loss_epoch": losses.avg}, step=epoch)
+        wandb.log({"train/acc5_epoch": top5.avg}, step=epoch)
+        wandb.log({"train/norm_mean(abs)": mean.item()}, step=epoch)
+        wandb.log({"train/norm_var-1(abs)": var.item()}, step=epoch)
+        wandb.log({"train/constraint_loss_mean": -1 * weight_mean.item()}, step=epoch)
+        wandb.log({"train/constraint_loss_var": -1 * weight_var.item()},step=epoch)
+    torch.cuda.empty_cache()
+
+        # Pop range "Body of iteration {}".format(i)
+
+
 
 def validate(epoch, val_loader, model, criterion):
     batch_time = AverageMeter()
@@ -533,7 +955,6 @@ def validate(epoch, val_loader, model, criterion):
         input, target = prefetcher.next()
     if args.local_rank == 0:
         wandb.log({"test/acc_epoch": top1.avg}, step=epoch)
-        wandb.log({"test/acc5_epoch": top5.avg}, step=epoch)
         wandb.log({"test/loss_epoch": losses.avg}, step=epoch)
 
     logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
@@ -568,22 +989,25 @@ class AverageMeter(object):
 
 def adjust_learning_rate(optimizer, epoch, step, len_epoch):
     """LR schedule that should yield 76% converged accuracy with batch size 256"""
-    if epoch >=100:
-        factor = 1
-    elif epoch >=150:
-        factor = 2
-    else:
-        factor = 0
+    factor = epoch // 40
+
+    if epoch >= 100:
+        factor = factor + 1
 
     lr = args.lr*(0.1**factor)
+    constraint_lr = args.constraint_lr * (0.1 ** factor)
+
 
     """Warmup"""
     if epoch < 5:
         lr = lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
+        constraint_lr = constraint_lr*float(1 + step + epoch*len_epoch)/(5.*len_epoch)
 
 
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
+
+    optimizer.param_groups[0]['lr'] = lr
+    optimizer.param_groups[1]['lr'] = constraint_lr
+
 
 
 def accuracy(output, target, topk=(1,)):
