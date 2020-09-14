@@ -93,13 +93,6 @@ def str2bool(v):
             raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-try:
-    from apex.parallel import DistributedDataParallel as DDP
-    from apex.fp16_utils import *
-    from apex import amp, optimizers
-    from apex.multi_tensor_apply import multi_tensor_applier
-except ImportError:
-    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
 
 def fast_collate(batch, memory_format):
 
@@ -113,7 +106,7 @@ def fast_collate(batch, memory_format):
         if(nump_array.ndim < 3):
             nump_array = np.expand_dims(nump_array, axis=-1)
         nump_array = np.rollaxis(nump_array, 2)
-        tensor[i] += torch.from_numpy(nump_array)
+        tensor[i] += torch.from_numpy(np.array(nump_array))
     return tensor, targets
 
 
@@ -166,6 +159,8 @@ def parse():
     parser.add_argument('--print_freq', default=100, type=int)
     parser.add_argument('--mixed_precision', default=True, type=str2bool)
     parser.add_argument('--use_gc', default=False, type=str2bool)
+    parser.add_argument('--constraint_weighted_average', default=True, type=str2bool)
+
 
 
 
@@ -387,12 +382,13 @@ def main():
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
     # before model, ... = amp.initialize(model, ...), the call to amp.initialize may alter
     # the types of model's parameters in a way that disrupts or destroys DDP's allreduce hooks.
-    if args.distributed:
+    if args.distributed and args.mixed_precision:
         # By default, apex.parallel.DistributedDataParallel overlaps communication with
         # computation in the backward pass.
-        # model = DDP(model)
+        model = DDP(model)
         # delay_allreduce delays all communication to the end of the backward pass.
-        model = DDP(model, delay_allreduce=True)
+    else:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -747,6 +743,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
     prefetcher = data_prefetcher(train_loader)
     input, target = prefetcher.next()
     i = 0
+    num_channel = 0
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            num_channel += m.num_features
+
     while input is not None:
         i += 1
 
@@ -768,14 +769,15 @@ def train(train_loader, model, criterion, optimizer, epoch):
         num_neg_var_large = 0
         for m in model.modules():
             if isinstance(m, Constraint_Lagrangian):
-                weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                if args.constraint_weighted_average == True:
+                    weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                else:
+                    weight_mean_, weight_var_ = m.get_weight_mean_var_sum()
                 weight_mean += weight_mean_
                 weight_var += weight_var_
-                num_neg_mean += (m.weight_mean < 0).sum()
-                num_neg_var += (m.weight_var < 0).sum()
-                num_neg_var_large += ( m.lambda_[m.weight_var < 0] < 0).sum()
-        if args.local_rank == 0 and i % args.print_freq == 0:
-            logger.info("num_negative_mean: {} num_negative_var: {} num_neg_var_lambda: {}".format(num_neg_mean, num_neg_var, num_neg_var_large))
+        if args.constraint_weighted_average == False:
+            weight_mean /= num_channel
+            weight_var /= num_channel
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
         constraint_loss = lag_weight * constraint_loss
@@ -790,7 +792,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
             reduced_loss = loss.data
 
         # to_python_float incurs a host<->device sync
-        losses.update(to_python_float(reduced_loss), input.size(0))
+        losses.update(reduced_loss.item(), input.size(0))
 
         loss += constraint_loss
 
@@ -881,8 +883,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 prec5 = reduce_tensor(prec5)
 
             # to_python_float incurs a host<->device sync
-            top1.update(to_python_float(prec1), input.size(0))
-            top5.update(to_python_float(prec5), input.size(0))
+            top1.update(prec1.item(), input.size(0))
+            top5.update(prec5.item(), input.size(0))
 
             torch.cuda.synchronize()
             batch_time.update((time.time() - end)/args.print_freq)
@@ -969,9 +971,9 @@ def validate(epoch, val_loader, model, criterion):
         else:
             reduced_loss = loss.data
 
-        losses.update(to_python_float(reduced_loss), input.size(0))
-        top1.update(to_python_float(prec1), input.size(0))
-        top5.update(to_python_float(prec5), input.size(0))
+        losses.update(reduced_loss.item(), input.size(0))
+        top1.update(prec1.item(), input.size(0))
+        top5.update(prec5.item(), input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -1067,7 +1069,7 @@ def accuracy(output, target, topk=(1,)):
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
-    dist.all_reduce(rt, op=dist.reduce_op.SUM)
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= args.world_size
     return rt
 
