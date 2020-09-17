@@ -173,10 +173,12 @@ def parse():
     parser.add_argument('--lambda_constraint_weight', default=0, type=float)
     parser.add_argument('--constraint_lr', default=0.1, type=float)
     parser.add_argument('--constraint_decay', default=1e-3, type=float)
+    parser.add_argument('--lambda_l2norm', default=0, type=float)
     parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
     parser.add_argument('--decay_constraint', default=-1, type=int)
     parser.add_argument('--update_affine_only', default=False, type=str2bool)
     parser.add_argument('--lag_function', default=None, type=str)
+    parser.add_argument('--decay_constraint_lr', default=True, type=str2bool)
 
     # two layer
     parser.add_argument('--two_layer', action='store_true', default=False)
@@ -216,6 +218,8 @@ def parse():
     parser.add_argument('--max_pretrain_epoch', default=20, type=int)
     parser.add_argument('--add_noise', default=None, type=str)
     parser.add_argument('--lambda_weight_mean', default=1, type=float)
+    parser.add_argument('--constraint_weighted_average', default=True, type=str2bool)
+
 
 
 
@@ -491,8 +495,8 @@ def main():
 
                 for m in model.modules():
                     if isinstance(m, norm_layer):
-                        m.sample_mean_std *= math.sqrt(args.warmup_scale)
-                        m.sample_var_std *= math.sqrt(args.warmup_scale)
+                        m.sample_mean_std = m.sample_mean_std * math.sqrt(args.warmup_scale)
+                        m.sample_var_std = m.sample_var_std * math.sqrt(args.warmup_scale)
 
 
 
@@ -732,6 +736,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     top5 = AverageMeter()
     train_loss_avg = 0
     train_loss = AverageMeter()
+    loss_l2norm_avg = AverageMeter()
     correct = 0
     total = 0
     mean = 0
@@ -747,6 +752,13 @@ def train(train_loader, model, criterion, optimizer, epoch):
     prefetcher = data_prefetcher(train_loader)
     input, target = prefetcher.next()
     i = 0
+    num_channel = 0
+    for m in model.modules():
+        if isinstance(m, norm_layer):
+            num_channel += m.num_features
+    print(num_channel)
+
+
     while input is not None:
         i += 1
 
@@ -766,16 +778,22 @@ def train(train_loader, model, criterion, optimizer, epoch):
         num_neg_mean = 0
         num_neg_var = 0
         num_neg_var_large = 0
+        loss_l2norm = 0
         for m in model.modules():
             if isinstance(m, Constraint_Lagrangian):
-                weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                if args.constraint_weighted_average == True:
+                    weight_mean_, weight_var_ =  m.get_weight_mean_var()
+                else:
+                    weight_mean_, weight_var_ = m.get_weight_mean_var_sum()
                 weight_mean += weight_mean_
                 weight_var += weight_var_
-                num_neg_mean += (m.weight_mean < 0).sum()
-                num_neg_var += (m.weight_var < 0).sum()
-                num_neg_var_large += ( m.lambda_[m.weight_var < 0] < 0).sum()
-        if args.local_rank == 0 and i % args.print_freq == 0:
-            logger.info("num_negative_mean: {} num_negative_var: {} num_neg_var_lambda: {}".format(num_neg_mean, num_neg_var, num_neg_var_large))
+                loss_l2norm += (m.xi_**2).sum()
+                loss_l2norm += (m.lambda_**2).sum()
+        if args.constraint_weighted_average == False:
+            weight_mean /= num_channel
+            weight_var /= num_channel
+
+
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
         constraint_loss = lag_weight * constraint_loss
@@ -790,9 +808,11 @@ def train(train_loader, model, criterion, optimizer, epoch):
             reduced_loss = loss.data
 
         # to_python_float incurs a host<->device sync
-        losses.update(to_python_float(reduced_loss), input.size(0))
+        losses.update(reduced_loss.item(), input.size(0))
+        loss_l2norm_avg.update(loss_l2norm.item())
 
         loss += constraint_loss
+        loss += args.lambda_l2norm/2 * loss_l2norm
 
 
         if args.mixed_precision:
@@ -810,6 +830,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         param = ['lagrangian', 'mu_', 'gamma_', 'post_affine_layer']
         max_grads = [p_lag_grad, p_mu_grad, p_gamma_grad, p_affine_grad]
         max_param_name = None
+        del loss_l2norm
 
         for p_name, p in model.named_parameters():
             max_grad = p.grad.abs().max()
@@ -881,8 +902,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 prec5 = reduce_tensor(prec5)
 
             # to_python_float incurs a host<->device sync
-            top1.update(to_python_float(prec1), input.size(0))
-            top5.update(to_python_float(prec5), input.size(0))
+            top1.update(prec1.item(), input.size(0))
+            top5.update(prec5.item(), input.size(0))
 
             torch.cuda.synchronize()
             batch_time.update((time.time() - end)/args.print_freq)
@@ -903,6 +924,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
                       'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
                       'Constraint mean {corat_mean:.4f}\t'
                       'Constraint var {corat_var:.4f}\t'
+                      'Lagrangian l2 norm {l2norm:.4f}\t'
                       'mean {mean:.4f}\t'
                       'var {var:.4f}\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
@@ -912,6 +934,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        args.world_size*args.batch_size/batch_time.avg,
                        batch_time=batch_time,
                        corat_mean =  weight_mean.item(),
+                       l2norm = loss_l2norm_avg.avg,
                        corat_var = weight_var.item(),
                        mean = mean,
                        var = var,
@@ -969,9 +992,9 @@ def validate(epoch, val_loader, model, criterion):
         else:
             reduced_loss = loss.data
 
-        losses.update(to_python_float(reduced_loss), input.size(0))
-        top1.update(to_python_float(prec1), input.size(0))
-        top5.update(to_python_float(prec5), input.size(0))
+        losses.update(reduced_loss.item(), input.size(0))
+        top1.update(prec1.item(), input.size(0))
+        top5.update(prec5.item(), input.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -998,6 +1021,8 @@ def validate(epoch, val_loader, model, criterion):
 
     logger.info(' * Prec@1 {top1.avg:.3f} Prec@5 {top5.avg:.3f}'
           .format(top1=top1, top5=top5))
+    torch.cuda.empty_cache()
+
 
     return top1.avg
 
@@ -1034,7 +1059,10 @@ def adjust_learning_rate(optimizer, epoch, step, len_epoch):
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
-    constraint_lr = args.constraint_lr * (0.1 ** factor)
+    if args.decay_constraint_lr is True:
+        constraint_lr = args.constraint_lr * (0.1 ** factor)
+    else:
+        constraint_lr = args.constraint_lr
 
 
     """Warmup"""

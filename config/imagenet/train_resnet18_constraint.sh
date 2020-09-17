@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint.py -a resnet_constraint18 --b 256 --workers 2  \
+python -m torch.distributed.launch --nproc_per_node=$1 --master_port=$2 main_amp_constraint.py -a resnet_constraint18 --b 512 --workers 2  \
     ./data/imagenet  \
     --norm_layer $3 \
     --mixed_precision True \

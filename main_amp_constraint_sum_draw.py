@@ -173,6 +173,7 @@ def parse():
     parser.add_argument('--lambda_constraint_weight', default=0, type=float)
     parser.add_argument('--constraint_lr', default=0.1, type=float)
     parser.add_argument('--constraint_decay', default=1e-3, type=float)
+    parser.add_argument('--lambda_l2norm', default=0, type=float)
     parser.add_argument('--get_optimal_lagrangian',action='store_true', default=False)
     parser.add_argument('--decay_constraint', default=-1, type=int)
     parser.add_argument('--update_affine_only', default=False, type=str2bool)
@@ -188,6 +189,7 @@ def parse():
     parser.add_argument('--decrease_with_conv_bias', default=False, type=str2bool)
     parser.add_argument('--affine_momentum', default=0.9, type=float)
     parser.add_argument('--affine_weight_decay', default=1e-4, type=float)
+    parser.add_argument('--decay_constraint_lr', default=True, type=str2bool)
 
     # for adding noise
     parser.add_argument('--sample_noise', default=False, type=str2bool)
@@ -338,6 +340,7 @@ def main():
 
     # Scale learning rate based on global batch size
     args.lr = args.lr*float(args.batch_size*args.world_size)/256.
+    args.lr = 0
     args.constraint_lr = args.constraint_lr*float(args.batch_size*args.world_size) / 256.
     constraint_param = []
 
@@ -350,6 +353,7 @@ def main():
 
     if args.decrease_affine_lr == 1:
         origin_param = filter(lambda p:id(p) not in constraint_param, model.parameters())
+        print("constraint decay: ", args.constraint_decay)
 
         if args.use_gc:
             from algorithm.SGD import SGD
@@ -486,16 +490,24 @@ def main():
 
     global mu_stat
     global gamma_stat
+    global mu_grad_stat
+    global gamma_grad_stat
     mu_stat = np.zeros((20, 50000))
     gamma_stat = np.zeros((20, 50000))
+    mu_grad_stat = np.zeros((20, 50000))
+    gamma_grad_stat = np.zeros((20, 50000))
     global mu_lag_stat
     global gamma_lag_stat
     mu_lag_stat = np.zeros((20, 50000))
     gamma_lag_stat = np.zeros((20, 50000))
     global mu_stat_last
     global gamma_stat_last
+    global mu_grad_stat_last
+    global gamma_grad_stat_last
     mu_stat_last = np.zeros((512, 50000))
     gamma_stat_last = np.zeros((512, 50000))
+    mu_grad_stat_last = np.zeros((512, 50000))
+    gamma_grad_stat_last = np.zeros((512, 50000))
     global mu_lag_stat_last
     global gamma_lag_stat_last
     mu_lag_stat_last = np.zeros((512, 50000))
@@ -517,10 +529,17 @@ def main():
 
 
 
-        
+
         train(train_loader, model, criterion, optimizer, epoch)
-        np.save("norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat])
-        np.save("norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last, gamma_lag_stat_last])
+        if args.local_rank == 0:
+            np.save(os.path.join("results/", args.log_dir) + "/norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat, mu_grad_stat, gamma_grad_stat])
+            np.save(os.path.join("results/", args.log_dir) + "/norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last,
+                                                                                        gamma_lag_stat_last, mu_grad_stat_last, gamma_grad_stat_last])
+
+            np.save("norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat, mu_grad_stat, gamma_grad_stat])
+            np.save("norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last,
+                                                                                        gamma_lag_stat_last, mu_grad_stat_last, gamma_grad_stat_last])
+
 
 
         # evaluate on validation set
@@ -618,6 +637,7 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
             m.reset_norm_statistics()
             num_norm+=1
             num_channel += m.num_features
+    print(num_channel)
     print("num_norm : {}".format(num_norm))
 
     prefetcher = data_prefetcher(train_loader)
@@ -776,7 +796,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
     for m in model.modules():
         if isinstance(m, norm_layer):
             num_channel += m.num_features
-    
+    print(num_channel)
+
     prefetcher = data_prefetcher(train_loader)
     input, target = prefetcher.next()
     i = 0
@@ -799,17 +820,21 @@ def train(train_loader, model, criterion, optimizer, epoch):
         num_neg_mean = 0
         num_neg_var = 0
         num_neg_var_large = 0
-        current_idx = (epoch - args.start_epoch) * len(train_loader) + i
+        current_idx = (epoch - args.start_epoch) * len(train_loader) + i - 1
         layer_idx = 0
-        print(current_idx)
+        l2_norm_loss = 0
         for m in model.modules():
             if isinstance(m, Constraint_Lagrangian):
                 weight_mean_, weight_var_ =  m.get_weight_mean_var_sum()
                 weight_mean += weight_mean_
                 weight_var += weight_var_
+                l2_norm_loss += (m.xi_**2).sum()
+                l2_norm_loss += (m.lambda_**2).sum()
                 num_neg_mean += (m.weight_mean < 0).sum()
                 num_neg_var += (m.weight_var < 0).sum()
                 num_neg_var_large += ( m.lambda_[m.weight_var < 0] < 0).sum()
+                if current_idx >= 50000:
+                    continue
                 mu_stat[layer_idx, current_idx] = m.mean[0].item()
                 mu_lag_stat[layer_idx, current_idx] = m.xi_[0].item()
                 gamma_stat[layer_idx, current_idx] = m.var[0].item()
@@ -822,9 +847,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
 
                 layer_idx+=1
-        if i == 100:
-            np.save("norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat])
-            np.save("norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last, gamma_lag_stat_last])
 
 
 
@@ -849,6 +871,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
         losses.update(to_python_float(reduced_loss), input.size(0))
 
         loss += constraint_loss
+        loss += args.lambda_l2norm/2 * l2_norm_loss
 
 
         if args.mixed_precision:
@@ -856,6 +879,27 @@ def train(train_loader, model, criterion, optimizer, epoch):
                 scaled_loss.backward()
         else:
             loss.backward()
+
+        layer_idx = 0
+        for m in model.modules():
+            if isinstance(m, Constraint_Lagrangian):
+                if current_idx >=50000:
+                    continue
+                mu_grad_stat[layer_idx, current_idx] = m.xi_.grad[0].item()
+                gamma_grad_stat[layer_idx, current_idx] = m.lambda_.grad[0].item()
+                if layer_idx == 19:
+                    mu_grad_stat_last[:,current_idx] = m.xi_.grad.detach().cpu().numpy().reshape(-1)
+                    gamma_grad_stat_last[:,current_idx] = m.lambda_.grad.detach().cpu().numpy().reshape(-1)
+
+                layer_idx+=1
+
+        if i == 100 or i == 1000 and args.local_rank == 0:
+            np.save(os.path.join("results/", args.log_dir) + "/norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat, mu_grad_stat, gamma_grad_stat])
+            np.save(os.path.join("results/", args.log_dir) + "/norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last,
+                                                                                     gamma_lag_stat_last, mu_grad_stat_last, gamma_grad_stat_last])
+            np.save("norm_stat.npy", [mu_stat, gamma_stat, mu_lag_stat, gamma_lag_stat, mu_grad_stat, gamma_grad_stat])
+            np.save("norm_stat_last.npy", [mu_stat_last, gamma_stat_last, mu_lag_stat_last,
+                                                                                     gamma_lag_stat_last, mu_grad_stat_last, gamma_grad_stat_last])
 
         p_grad = 0
         p_lag_grad = 0
@@ -1090,7 +1134,10 @@ def adjust_learning_rate(optimizer, epoch, step, len_epoch):
         factor = factor + 1
 
     lr = args.lr*(0.1**factor)
-    constraint_lr = args.constraint_lr * (0.1 ** factor)
+    if args.decay_constraint_lr is True:
+        constraint_lr = args.constraint_lr * (0.1 ** factor)
+    else:
+        constraint_lr = args.constraint_lr
 
 
     """Warmup"""
@@ -1123,7 +1170,7 @@ def accuracy(output, target, topk=(1,)):
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
-    dist.all_reduce(rt, op=dist.reduce_op.SUM)
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= args.world_size
     return rt
 

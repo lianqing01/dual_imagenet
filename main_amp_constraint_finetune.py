@@ -447,7 +447,6 @@ def main():
     device = torch.device("cuda")
 
 
-    '''
     for m in model.modules():
         if isinstance(m, norm_layer):
             m.sample_noise = args.sample_noise
@@ -455,7 +454,6 @@ def main():
             m.add_noise = args.add_noise
             m.sample_mean_std = torch.sqrt(torch.Tensor([args.noise_mean_std])[0].to(device))
             m.sample_var_std = torch.sqrt(torch.Tensor([args.noise_var_std])[0].to(device))
-    '''
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:

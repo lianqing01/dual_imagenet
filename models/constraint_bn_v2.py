@@ -141,8 +141,6 @@ class LagrangianFunction_v5(Function):
     @staticmethod
     def backward(ctx, grad_output):
         input, weight = ctx.saved_tensors
-        import pdb
-        pdb.set_trace()
         grad_input = grad_weight = None
         if ctx.needs_input_grad[0]:
             grad_input = grad_output * weight
