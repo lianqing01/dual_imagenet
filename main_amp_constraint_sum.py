@@ -99,7 +99,7 @@ try:
     from apex import amp, optimizers
     from apex.multi_tensor_apply import multi_tensor_applier
 except ImportError:
-    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
+    pass
 
 def fast_collate(batch, memory_format):
 

@@ -2,21 +2,21 @@ import torch
 import torch.nn as nn
 from .constraint_bn_v2 import *
 
-__all__ = ['resnet_constraint_v2', 'resnet_constraint_v218', 'resnet_constraint_v234', 'resnet_constraint_v250', 'resnet_constraint_v2101',
-           'resnet_constraint_v2152', 'resnext50_32x4d', 'resnext101_32x8d',
-           'wide_resnet_constraint_v250_2', 'wide_resnet_constraint_v2101_2']
+__all__ = ['resnet_constraint_inverse', 'resnet_constraint_inverse18', 'resnet_constraint_inverse34', 'resnet_constraint_inverse50', 'resnet_constraint_inverse101',
+           'resnet_constraint_inverse152', 'resnext50_32x4d', 'resnext101_32x8d',
+           'wide_resnet_constraint_inverse50_2', 'wide_resnet_constraint_inverse101_2']
 
 
 model_urls = {
-    'resnet_constraint_v218': 'https://download.pytorch.org/models/resnet_constraint_v218-5c106cde.pth',
-    'resnet_constraint_v234': 'https://download.pytorch.org/models/resnet_constraint_v234-333f7ec4.pth',
-    'resnet_constraint_v250': 'https://download.pytorch.org/models/resnet_constraint_v250-19c8e357.pth',
-    'resnet_constraint_v2101': 'https://download.pytorch.org/models/resnet_constraint_v2101-5d3b4d8f.pth',
-    'resnet_constraint_v2152': 'https://download.pytorch.org/models/resnet_constraint_v2152-b121ed2d.pth',
+    'resnet_constraint_inverse18': 'https://download.pytorch.org/models/resnet_constraint_inverse18-5c106cde.pth',
+    'resnet_constraint_inverse34': 'https://download.pytorch.org/models/resnet_constraint_inverse34-333f7ec4.pth',
+    'resnet_constraint_inverse50': 'https://download.pytorch.org/models/resnet_constraint_inverse50-19c8e357.pth',
+    'resnet_constraint_inverse101': 'https://download.pytorch.org/models/resnet_constraint_inverse101-5d3b4d8f.pth',
+    'resnet_constraint_inverse152': 'https://download.pytorch.org/models/resnet_constraint_inverse152-b121ed2d.pth',
     'resnext50_32x4d': 'https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth',
     'resnext101_32x8d': 'https://download.pytorch.org/models/resnext101_32x8d-8ba56ff5.pth',
-    'wide_resnet_constraint_v250_2': 'https://download.pytorch.org/models/wide_resnet_constraint_v250_2-95faca4d.pth',
-    'wide_resnet_constraint_v2101_2': 'https://download.pytorch.org/models/wide_resnet_constraint_v2101_2-32ee1156.pth',
+    'wide_resnet_constraint_inverse50_2': 'https://download.pytorch.org/models/wide_resnet_constraint_inverse50_2-95faca4d.pth',
+    'wide_resnet_constraint_inverse101_2': 'https://download.pytorch.org/models/wide_resnet_constraint_inverse101_2-32ee1156.pth',
 }
 
 
@@ -51,8 +51,6 @@ class BasicBlock(nn.Module):
         self.bn2 = norm_layer(planes)
         self.downsample = downsample
         self.stride = stride
-        self.scale = nn.Parameter(torch.zeros(1))
-
 
     def forward(self, x):
         identity = x
@@ -63,8 +61,6 @@ class BasicBlock(nn.Module):
         out = self.relu(out)
         out = self.conv2(out)
         out = self.bn2(out)
-        out *= self.scale
-
 
         if self.downsample is not None:
             identity = self.downsample(x)
@@ -79,8 +75,8 @@ class Bottleneck(nn.Module):
     # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
     # while original implementation places the stride at the first 1x1 convolution(self.conv1)
     # according to "Deep residual learning for image recognition"https://arxiv.org/abs/1512.03385.
-    # This variant is also known as resnet_constraint_v2 V1.5 and improves accuracy according to
-    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_constraint_v2_50_v1_5_for_pytorch.
+    # This variant is also known as resnet_constraint_inverse V1.5 and improves accuracy according to
+    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_constraint_inverse_50_v1_5_for_pytorch.
 
     expansion = 4
 
@@ -107,8 +103,8 @@ class Bottleneck(nn.Module):
         out = self.conv1(x)
 
         out = self.bn1(out)
-        out = self.relu(out)
 
+        out = self.relu(out)
         out = self.conv2(out)
         out = self.relu(out)
 
@@ -125,15 +121,16 @@ class Bottleneck(nn.Module):
         return out
 
 
-class resnet_constraint_v2(nn.Module):
+class resnet_constraint_inverse(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
                  norm_layer=None):
-        super(resnet_constraint_v2, self).__init__()
+        super(resnet_constraint_inverse, self).__init__()
         if norm_layer is None:
             norm_layer = Constraint_Norm2d
         self._norm_layer = norm_layer
+        print(self._norm_layer)
 
         self.inplanes = 64
         self.dilation = 1
@@ -163,13 +160,8 @@ class resnet_constraint_v2(nn.Module):
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                nn.init.xavier_normal_(m.weight)
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
                 m.bias.data.fill_(0)
-            elif isinstance(m, nn.Linear):
-                nn.init.constant_(m.weight, 0)
-                nn.init.constant_(m.bias, 0)
-
-
 
         # Zero-initialize the last BN in each residual branch,
         # so that the residual branch starts with zeros, and each residual block behaves like an identity.
@@ -202,8 +194,9 @@ class resnet_constraint_v2(nn.Module):
     def _forward_impl(self, x):
         # See note [TorchScript super()]
         x = self.conv1(x)
-        x = self.relu(x)
+
         x = self.bn1(x)
+        x = self.relu(x)
         x = self.maxpool(x)
 
         x = self.layer1(x)
@@ -221,68 +214,68 @@ class resnet_constraint_v2(nn.Module):
         return self._forward_impl(x)
 
 
-def _resnet_constraint_v2(arch, block, layers, pretrained, progress, **kwargs):
-    model = resnet_constraint_v2(block, layers, **kwargs)
+def _resnet_constraint_inverse(arch, block, layers, pretrained, progress, **kwargs):
+    model = resnet_constraint_inverse(block, layers, **kwargs)
     return model
 
 
-def resnet_constraint_v218(pretrained=False, progress=True, **kwargs):
-    r"""resnet_constraint_v2-18 model from
+def resnet_constraint_inverse18(pretrained=False, progress=True, **kwargs):
+    r"""resnet_constraint_inverse-18 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return _resnet_constraint_v2('resnet_constraint_v218', BasicBlock, [2, 2, 2, 2], pretrained, progress,
+    return _resnet_constraint_inverse('resnet_constraint_inverse18', BasicBlock, [2, 2, 2, 2], pretrained, progress,
                    **kwargs)
 
 
-def resnet_constraint_v234(pretrained=False, progress=True, **kwargs):
-    r"""resnet_constraint_v2-34 model from
+def resnet_constraint_inverse34(pretrained=False, progress=True, **kwargs):
+    r"""resnet_constraint_inverse-34 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return _resnet_constraint_v2('resnet_constraint_v234', BasicBlock, [3, 4, 6, 3], pretrained, progress,
+    return _resnet_constraint_inverse('resnet_constraint_inverse34', BasicBlock, [3, 4, 6, 3], pretrained, progress,
                    **kwargs)
 
 
-def resnet_constraint_v250(pretrained=False, progress=True, **kwargs):
-    r"""resnet_constraint_v2-50 model from
+def resnet_constraint_inverse50(pretrained=False, progress=True, **kwargs):
+    r"""resnet_constraint_inverse-50 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return _resnet_constraint_v2('resnet_constraint_v250', Bottleneck, [3, 4, 6, 3], pretrained, progress,
+    return _resnet_constraint_inverse('resnet_constraint_inverse50', Bottleneck, [3, 4, 6, 3], pretrained, progress,
                    **kwargs)
 
 
-def resnet_constraint_v2101(pretrained=False, progress=True, **kwargs):
-    r"""resnet_constraint_v2-101 model from
+def resnet_constraint_inverse101(pretrained=False, progress=True, **kwargs):
+    r"""resnet_constraint_inverse-101 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return _resnet_constraint_v2('resnet_constraint_v2101', Bottleneck, [3, 4, 23, 3], pretrained, progress,
+    return _resnet_constraint_inverse('resnet_constraint_inverse101', Bottleneck, [3, 4, 23, 3], pretrained, progress,
                    **kwargs)
 
 
-def resnet_constraint_v2152(pretrained=False, progress=True, **kwargs):
-    r"""resnet_constraint_v2-152 model from
+def resnet_constraint_inverse152(pretrained=False, progress=True, **kwargs):
+    r"""resnet_constraint_inverse-152 model from
     `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
-    return _resnet_constraint_v2('resnet_constraint_v2152', Bottleneck, [3, 8, 36, 3], pretrained, progress,
+    return _resnet_constraint_inverse('resnet_constraint_inverse152', Bottleneck, [3, 8, 36, 3], pretrained, progress,
                    **kwargs)
 
 
@@ -296,7 +289,7 @@ def resnext50_32x4d(pretrained=False, progress=True, **kwargs):
     """
     kwargs['groups'] = 32
     kwargs['width_per_group'] = 4
-    return _resnet_constraint_v2('resnext50_32x4d', Bottleneck, [3, 4, 6, 3],
+    return _resnet_constraint_inverse('resnext50_32x4d', Bottleneck, [3, 4, 6, 3],
                    pretrained, progress, **kwargs)
 
 
@@ -310,41 +303,41 @@ def resnext101_32x8d(pretrained=False, progress=True, **kwargs):
     """
     kwargs['groups'] = 32
     kwargs['width_per_group'] = 8
-    return _resnet_constraint_v2('resnext101_32x8d', Bottleneck, [3, 4, 23, 3],
+    return _resnet_constraint_inverse('resnext101_32x8d', Bottleneck, [3, 4, 23, 3],
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet_constraint_v250_2(pretrained=False, progress=True, **kwargs):
-    r"""Wide resnet_constraint_v2-50-2 model from
+def wide_resnet_constraint_inverse50_2(pretrained=False, progress=True, **kwargs):
+    r"""Wide resnet_constraint_inverse-50-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
-    The model is the same as resnet_constraint_v2 except for the bottleneck number of channels
+    The model is the same as resnet_constraint_inverse except for the bottleneck number of channels
     which is twice larger in every block. The number of channels in outer 1x1
-    convolutions is the same, e.g. last block in resnet_constraint_v2-50 has 2048-512-2048
-    channels, and in Wide resnet_constraint_v2-50-2 has 2048-1024-2048.
+    convolutions is the same, e.g. last block in resnet_constraint_inverse-50 has 2048-512-2048
+    channels, and in Wide resnet_constraint_inverse-50-2 has 2048-1024-2048.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     kwargs['width_per_group'] = 64 * 2
-    return _resnet_constraint_v2('wide_resnet_constraint_v250_2', Bottleneck, [3, 4, 6, 3],
+    return _resnet_constraint_inverse('wide_resnet_constraint_inverse50_2', Bottleneck, [3, 4, 6, 3],
                    pretrained, progress, **kwargs)
 
 
-def wide_resnet_constraint_v2101_2(pretrained=False, progress=True, **kwargs):
-    r"""Wide resnet_constraint_v2-101-2 model from
+def wide_resnet_constraint_inverse101_2(pretrained=False, progress=True, **kwargs):
+    r"""Wide resnet_constraint_inverse-101-2 model from
     `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_
 
-    The model is the same as resnet_constraint_v2 except for the bottleneck number of channels
+    The model is the same as resnet_constraint_inverse except for the bottleneck number of channels
     which is twice larger in every block. The number of channels in outer 1x1
-    convolutions is the same, e.g. last block in resnet_constraint_v2-50 has 2048-512-2048
-    channels, and in Wide resnet_constraint_v2-50-2 has 2048-1024-2048.
+    convolutions is the same, e.g. last block in resnet_constraint_inverse-50 has 2048-512-2048
+    channels, and in Wide resnet_constraint_inverse-50-2 has 2048-1024-2048.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
         progress (bool): If True, displays a progress bar of the download to stderr
     """
     kwargs['width_per_group'] = 64 * 2
-    return _resnet_constraint_v2('wide_resnet_constraint_v2101_2', Bottleneck, [3, 4, 23, 3],
+    return _resnet_constraint_inverse('wide_resnet_constraint_inverse101_2', Bottleneck, [3, 4, 23, 3],
                    pretrained, progress, **kwargs)

@@ -93,13 +93,6 @@ def str2bool(v):
             raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
-try:
-    from apex.parallel import DistributedDataParallel as DDP
-    from apex.fp16_utils import *
-    from apex import amp, optimizers
-    from apex.multi_tensor_apply import multi_tensor_applier
-except ImportError:
-    raise ImportError("Please install apex from https://www.github.com/nvidia/apex to run this example.")
 
 def fast_collate(batch, memory_format):
 
@@ -113,7 +106,7 @@ def fast_collate(batch, memory_format):
         if(nump_array.ndim < 3):
             nump_array = np.expand_dims(nump_array, axis=-1)
         nump_array = np.rollaxis(nump_array, 2)
-        tensor[i] += torch.from_numpy(nump_array)
+        tensor[i] += torch.from_numpy(np.array(nump_array))
     return tensor, targets
 
 
@@ -166,6 +159,10 @@ def parse():
     parser.add_argument('--print_freq', default=100, type=int)
     parser.add_argument('--mixed_precision', default=True, type=str2bool)
     parser.add_argument('--use_gc', default=False, type=str2bool)
+    parser.add_argument('--reparam', default=False, type=str2bool)
+    parser.add_argument('--optimal_multiplier', default=False, type=str2bool)
+    parser.add_argument('--multiplier_average', default=0.9, type=float)
+
 
 
 
@@ -352,6 +349,10 @@ def main():
 
     if args.decrease_affine_lr == 1:
         origin_param = filter(lambda p:id(p) not in constraint_param, model.parameters())
+        constraint_decay = args.constraint_decay
+        if args.optimal_multiplier is True:
+            constraint_decay = 0
+            args.constraint_lr = 0
 
         if args.use_gc:
             from algorithm.SGD import SGD
@@ -360,7 +361,7 @@ def main():
                         {'params': origin_param},
                         {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
                                 'lr': args.constraint_lr,
-                                'weight_decay': args.constraint_decay},
+                                'weight_decay': constraint_decay},
                         ],
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay, use_gc=True)
@@ -369,7 +370,7 @@ def main():
                         {'params': origin_param},
                         {'params':  filter(lambda p:id(p) in constraint_param, model.parameters()),
                                 'lr': args.constraint_lr,
-                                'weight_decay': args.constraint_decay},
+                                'weight_decay': constraint_decay},
                         ],
                         lr=args.lr, momentum=0.9,
                         weight_decay=args.decay)
@@ -391,12 +392,13 @@ def main():
     # This must be done AFTER the call to amp.initialize.  If model = DDP(model) is called
     # before model, ... = amp.initialize(model, ...), the call to amp.initialize may alter
     # the types of model's parameters in a way that disrupts or destroys DDP's allreduce hooks.
-    if args.distributed:
+    if args.distributed and args.mixed_precision:
         # By default, apex.parallel.DistributedDataParallel overlaps communication with
         # computation in the backward pass.
-        # model = DDP(model)
+        model = DDP(model)
         # delay_allreduce delays all communication to the end of the backward pass.
-        model = DDP(model, delay_allreduce=True)
+    else:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda()
@@ -505,6 +507,15 @@ def main():
 
         # evaluate on validation set
         prec1 = validate(epoch, val_loader, model, criterion)
+        if args.reparam is True:
+            for m in model.modules():
+                if isinstance(m, norm_layer):
+                    m.lagrangian.lambda_.data.fill_(0)
+                    m.lagrangian.xi_.data.fill_(0)
+            with torch.no_grad():
+                print("initialization")
+                _initialize(train_loader, model, criterion, optimizer, 0)
+
 
 
         # remember best prec@1 and save checkpoint
@@ -701,12 +712,12 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                             loss=losses, top1=top1, top5=top5))
                         logger.info("remain time:  {}".format(remain_time))
 
-
             if idx == 0:
                 track_layer = 0
                 for m in model.modules():
                     if isinstance(m, norm_layer):
                         if track_layer == layer:
+                            print("initialize_mu", track_layer)
                             m._initialize_mu()
                             break
                         else:
@@ -716,7 +727,12 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
                 for m in model.modules():
                     if isinstance(m, norm_layer):
                         if track_layer == layer:
+                            print("initialize_gamma", track_layer)
                             m._initialize_gamma()
+                            if args.world_size > 1:
+                                allreduce_params(model.parameters())
+
+                            m._initialize_affine(args.resume)
                             break
                         else:
                             track_layer += 1
@@ -726,6 +742,7 @@ def _initialize(train_loader, model, criterion, optimizer, epoch):
             for m in model.modules():
                 if isinstance(m, norm_layer):
                     m.reset_norm_statistics()
+
 
 
 
@@ -756,8 +773,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
     for m in model.modules():
         if isinstance(m, norm_layer):
             num_channel += m.num_features
-    print(num_channel)
-
 
     while input is not None:
         i += 1
@@ -785,14 +800,19 @@ def train(train_loader, model, criterion, optimizer, epoch):
                     weight_mean_, weight_var_ =  m.get_weight_mean_var()
                 else:
                     weight_mean_, weight_var_ = m.get_weight_mean_var_sum()
+                # get the mean and var
+                # update lagrangian
+                if args.optimal_multiplier:
+                    with torch.no_grad():
+                        m.xi_.data = m.xi_.data*args.multiplier_average + \
+                            (1 - args.multiplier_average) * m.mean.detach()*lag_weight / (args.constraint_decay * num_channel)
+                        m.lambda_.data = m.lambda_.data * args.multiplier_average + \
+                            (1 - args.multiplier_average) * m.var.detach() * lag_weight / (args.constraint_decay * num_channel)
                 weight_mean += weight_mean_
                 weight_var += weight_var_
-                loss_l2norm += (m.xi_**2).sum()
-                loss_l2norm += (m.lambda_**2).sum()
         if args.constraint_weighted_average == False:
             weight_mean /= num_channel
             weight_var /= num_channel
-
 
 
         constraint_loss = args.lambda_weight_mean * weight_mean + weight_var
@@ -809,10 +829,8 @@ def train(train_loader, model, criterion, optimizer, epoch):
 
         # to_python_float incurs a host<->device sync
         losses.update(reduced_loss.item(), input.size(0))
-        loss_l2norm_avg.update(loss_l2norm.item())
 
         loss += constraint_loss
-        loss += args.lambda_l2norm/2 * loss_l2norm
 
 
         if args.mixed_precision:
@@ -830,7 +848,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
         param = ['lagrangian', 'mu_', 'gamma_', 'post_affine_layer']
         max_grads = [p_lag_grad, p_mu_grad, p_gamma_grad, p_affine_grad]
         max_param_name = None
-        del loss_l2norm
 
         for p_name, p in model.named_parameters():
             max_grad = p.grad.abs().max()
@@ -924,7 +941,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
                       'Loss {loss.val:.10f} ({loss.avg:.4f})\t'
                       'Constraint mean {corat_mean:.4f}\t'
                       'Constraint var {corat_var:.4f}\t'
-                      'Lagrangian l2 norm {l2norm:.4f}\t'
                       'mean {mean:.4f}\t'
                       'var {var:.4f}\t'
                       'Prec@1 {top1.val:.3f} ({top1.avg:.3f})\t'
@@ -934,7 +950,6 @@ def train(train_loader, model, criterion, optimizer, epoch):
                        args.world_size*args.batch_size/batch_time.avg,
                        batch_time=batch_time,
                        corat_mean =  weight_mean.item(),
-                       l2norm = loss_l2norm_avg.avg,
                        corat_var = weight_var.item(),
                        mean = mean,
                        var = var,
@@ -1095,7 +1110,7 @@ def accuracy(output, target, topk=(1,)):
 
 def reduce_tensor(tensor):
     rt = tensor.clone()
-    dist.all_reduce(rt, op=dist.reduce_op.SUM)
+    dist.all_reduce(rt, op=dist.ReduceOp.SUM)
     rt /= args.world_size
     return rt
 
