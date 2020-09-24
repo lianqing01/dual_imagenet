@@ -160,6 +160,7 @@ def parse():
     parser.add_argument('--mixed_precision', default=True, type=str2bool)
     parser.add_argument('--use_gc', default=False, type=str2bool)
     parser.add_argument('--reparam', default=False, type=str2bool)
+    parser.add_argument('--reparam_freq', default=1, type=int)
     parser.add_argument('--optimal_multiplier', default=False, type=str2bool)
     parser.add_argument('--multiplier_average', default=0.9, type=float)
 
@@ -507,7 +508,7 @@ def main():
 
         # evaluate on validation set
         prec1 = validate(epoch, val_loader, model, criterion)
-        if args.reparam is True:
+        if args.reparam is True and epoch % args.reparam_freq == 0:
             for m in model.modules():
                 if isinstance(m, norm_layer):
                     m.lagrangian.lambda_.data.fill_(0)

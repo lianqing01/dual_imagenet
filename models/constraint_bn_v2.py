@@ -268,7 +268,10 @@ class Constraint_Norm(nn.Module):
 
         # mean
 
-
+        if self.training and self.sample_noise is True:
+            temp_x = (x - self.mu_) / (torch.sqrt(self.gamma_**2 + self.eps))
+            mean = self.lagrangian.get_weighted_mean(temp_x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(temp_x, self.gamma_, self.norm_dim)
 
         if self.pre_affine:
             if self.sample_noise and self.training:
@@ -287,9 +290,12 @@ class Constraint_Norm(nn.Module):
             else:
 
                 x = x / torch.sqrt(self.gamma_**2 + self.eps)
+        if not self.training or self.sample_noise is False:
+            mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
+            var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
 
-        mean = self.lagrangian.get_weighted_mean(x, self.norm_dim)
-        var = self.lagrangian.get_weighted_var(x, self.gamma_, self.norm_dim)
+
+
         self.mean += mean.detach()
         self.var += var.detach()
 
